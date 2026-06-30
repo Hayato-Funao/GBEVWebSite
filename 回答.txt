@@ -1,0 +1,422 @@
+Q：
+JavaScriptでSharePointのRestAPIを使えるかということを聞きたい。
+Pythonで書いたツールをexe化して起動してログイン認証処理をやって、初回は認証をブラウザ開いて認証するみたいのをユーザーにやらせていたが、
+サーバー用PCからそのログイン 認証処理をすることは可能？
+
+A：
+================================================================================
+JavaScriptでSharePoint REST API利用 & サーバーPCからの認証について
+================================================================================
+
+■ 1. JavaScriptでSharePoint REST APIは使えるか
+
+使えます。むしろSharePoint REST APIはJavaScriptとの親和性が高いです。
+
+- ブラウザ上（SPFxやSharePointページ内スクリプト）では認証が自動（ログイン済みセッションを利用）
+- Node.js（サーバーサイド）でも fetch や axios でAPI呼び出し可能
+- PnP JS（@pnp/sp）という便利ライブラリもある
+
+
+■ 2. サーバー用PCからブラウザ認証なしで実行できるか
+
+できます。ただし認証フローを変える必要があります。
+
+【方法一覧】
+
+1. クライアント資格情報フロー（推奨）
+   - Azure ADにアプリ登録し、client_id + client_secret（またはcertificate）で認証
+   - ブラウザ不要
+   - サーバー常駐処理・バッチ処理に最適
+
+2. デバイスコードフロー
+   - コンソールにコードを表示し、ユーザーが別PCのブラウザで認証
+   - サーバーにブラウザがないが、ユーザー権限が必要な場合に有効
+
+3. ROPC（ユーザー名/パスワード直接）
+   - コード内にID/PW埋め込み
+   - MFA有効だと使えない。非推奨
+
+
+■ 推奨構成：クライアント資格情報フロー（アプリ専用認証）
+
+手順：
+  1. Azure ADでアプリ登録
+  2. SharePointのサイト権限をそのアプリに付与（サイトコレクション管理者 or Graph API権限）
+  3. client_id + client_secret でトークン取得
+  4. そのトークンでSharePoint REST APIを叩く
+
+JavaScriptコード例（Node.js）：
+------------------------------------------------------------
+// 事前に npm install node-fetch でインストール（Node.js 18以上はfetch組み込み）
+
+const TENANT_ID = "your-tenant-id";
+const CLIENT_ID = "your-client-id";
+const CLIENT_SECRET = "your-client-secret";
+const SITE_ID = "your-site-id";
+const LIST_ID = "your-list-id";
+
+// ① トークン取得
+async function getAccessToken() {
+  const url = `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`;
+  const body = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: CLIENT_ID,
+    client_secret: CLIENT_SECRET,
+    scope: "https://graph.microsoft.com/.default",
+  });
+
+  const res = await fetch(url, { method: "POST", body });
+  const json = await res.json();
+  return json.access_token;
+}
+
+// ② SharePointリストにアイテムを追加（書き込み）
+async function addListItem(token, fields) {
+  const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID}/items`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ fields }),
+  });
+  return await res.json();
+}
+
+// ③ 実行
+(async () => {
+  const token = await getAccessToken();
+
+  // リストに書き込むフィールドを指定（列名: 値）
+  const result = await addListItem(token, {
+    Title: "テスト貸出",
+    Status: "貸出中",
+    BorrowerName: "山田太郎",
+  });
+
+  console.log("追加されたアイテム:", result);
+})();
+------------------------------------------------------------
+
+【リスト更新（既存アイテムの編集）の場合】
+------------------------------------------------------------
+async function updateListItem(token, itemId, fields) {
+  const url = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/lists/${LIST_ID}/items/${itemId}/fields`;
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(fields),
+  });
+  return await res.json();
+}
+
+// 使い方例：アイテムID=5 のStatusを「返却済」に更新
+const token = await getAccessToken();
+await updateListItem(token, 5, { Status: "返却済" });
+------------------------------------------------------------
+
+
+■ まとめ・次のステップ
+
+現状の構成（Python exe + ブラウザ認証）をサーバーPCで無人実行できるように変えるには、
+Azure ADアプリ登録が必要です。
+
+組織のAzure AD管理者権限が必要になりますが、一度設定すれば
+サーバーから完全無人実行が可能になります。
+
+→ まず管理者への申請が必要かどうかの確認が最初のステップ。
+
+================================================================================
+
+
+Q：
+JavaScriptでも技術的にできるということだよね。                                                                                                                                                                                             
+
+A：
+●はい、そうです。
+
+  JavaScriptでも技術的には問題なくできます。認証（トークン取得）もリストの読み書きも、HTTPリクエストを投げるだけなので言語は問いません。
+
+  ただ、サーバーPC上で動かすという点では実行環境の選択が変わります：
+
+  - Python exe →そのまま配布・実行できる
+  - JavaScript（Node.js） →サーバーPCにNode.jsのインストールが必要、またはexe化（pkgやnexeなどのツール）が必要
+
+  現状のPython構成をわざわざJavaScriptに書き直すメリットは少ないので、認証フローをブラウザ不要のクライアント資格情報フローに変えるだけで、Pythonのまま進めるのが現実的だと思います。
+
+================================================================================
+
+Q：
+Webアプリで構築する場合、それぞれの環境方針のやり方は？
+（①SharePointページ内埋め込み / ②社内サーバー / ③Azure Static Web Apps）
+想定：ユーザー自身がログインして操作 ＋ システムが自動でSharePoint読み込み・メール送信
+
+A：
+================================================================================
+Webアプリ構築 各方針別のやり方
+================================================================================
+
+【共通アーキテクチャ】
+  フロントエンド（MSAL.js）  ←ユーザー操作・ログイン
+         ↕
+  バックエンド（Node.js）    ←自動処理・メール送信（client_credentials）
+         ↕
+  SharePoint / Microsoft Graph API
+
+
+================================================================================
+方針A：SharePointページ内に埋め込む
+================================================================================
+
+■ 概要
+  SharePointのページにHTMLファイル（スクリプトエディタWebパーツ or SPFx）として
+  JavaScriptを直接埋め込む方式。
+
+■ 向き不向き
+  - 追加インフラ不要でシンプル
+  - ユーザー操作部分（読み書き）はこれで完結
+  - 自動処理（定期メール送信など）はSharePoint単体では難しい → Power Automate併用が現実的
+
+■ 実装手順
+  1. Azure ADにアプリ登録（SPAとして登録）
+  2. リダイレクトURIにSharePointページのURLを設定
+  3. MSAL.jsでログイン・トークン取得
+  4. Graph APIでSharePointリストを操作
+
+■ コード例（SharePointページ内スクリプト）
+------------------------------------------------------------
+<!-- SharePointのスクリプトエディタに貼り付ける -->
+<script src="https://alcdn.msauth.net/browser/2.x.x/js/msal-browser.min.js"></script>
+<script>
+const msalConfig = {
+  auth: {
+    clientId: "your-client-id",
+    authority: "https://login.microsoftonline.com/your-tenant-id",
+    redirectUri: "https://yourtenant.sharepoint.com/sites/yoursite/SitePage.aspx",
+  }
+};
+const msalInstance = new msal.PublicClientApplication(msalConfig);
+
+async function login() {
+  const result = await msalInstance.loginPopup({
+    scopes: ["https://graph.microsoft.com/Sites.ReadWrite.All"]
+  });
+  return result.accessToken;
+}
+
+async function getListItems(token, siteId, listId) {
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${listId}/items?expand=fields`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return await res.json();
+}
+</script>
+------------------------------------------------------------
+
+■ 自動処理部分（メール送信など）
+  → Power Automateのフローを別途作成して対応（コード不要）
+
+
+================================================================================
+方針B：社内サーバーで動かす（Node.js + フロントエンド）
+================================================================================
+
+■ 概要
+  社内サーバー上にNode.jsアプリを立ち上げ、フロントとバックを一体で運用する方式。
+
+■ 向き不向き
+  - client_secretをサーバー側に隠せるのでセキュア
+  - 自動処理（定期実行・メール送信）をサーバー側に実装できる
+  - サーバーの管理・保守が必要
+
+■ 実装手順
+  1. Azure ADにアプリ登録（Webアプリとして登録）
+  2. フロント用：委任権限（Delegated）を設定
+  3. バックエンド用：アプリ権限（Application）を設定し管理者承認を得る
+  4. Node.jsサーバーを社内PCまたはサーバーで起動
+
+■ フロントエンド：ユーザーログイン部分
+------------------------------------------------------------
+// frontend/app.js
+import { PublicClientApplication } from "@azure/msal-browser";
+
+const msalInstance = new PublicClientApplication({
+  auth: {
+    clientId: "your-client-id",
+    authority: "https://login.microsoftonline.com/your-tenant-id",
+    redirectUri: "http://社内サーバーIP:3000",
+  }
+});
+
+async function login() {
+  const result = await msalInstance.loginPopup({
+    scopes: ["https://graph.microsoft.com/Sites.ReadWrite.All"]
+  });
+  return result.accessToken;
+}
+------------------------------------------------------------
+
+■ バックエンド：自動処理・メール送信部分
+------------------------------------------------------------
+// backend/server.js（Node.js + Express）
+const express = require("express");
+const app = express();
+
+const TENANT_ID = "your-tenant-id";
+const CLIENT_ID = "your-client-id";
+const CLIENT_SECRET = "your-client-secret";  // サーバー側に隠す
+const SENDER_EMAIL = "sender@yourtenant.onmicrosoft.com";
+
+// アプリ用トークン取得（ユーザー不要）
+async function getAppToken() {
+  const res = await fetch(
+    `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`,
+    {
+      method: "POST",
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        scope: "https://graph.microsoft.com/.default",
+      }),
+    }
+  );
+  return (await res.json()).access_token;
+}
+
+// SharePointリストを読む
+async function getListItems(token, siteId, listId) {
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${listId}/items?expand=fields`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return await res.json();
+}
+
+// メール送信
+async function sendMail(token, to, subject, body) {
+  await fetch(
+    `https://graph.microsoft.com/v1.0/users/${SENDER_EMAIL}/sendMail`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: {
+          subject,
+          body: { contentType: "Text", content: body },
+          toRecipients: [{ emailAddress: { address: to } }],
+        },
+      }),
+    }
+  );
+}
+
+// 定期実行（例：1時間ごとにチェックしてメール送信）
+setInterval(async () => {
+  const token = await getAppToken();
+  const items = await getListItems(token, "your-site-id", "your-list-id");
+  for (const item of items.value) {
+    if (item.fields.Status === "期限切れ") {
+      await sendMail(token, item.fields.Email, "返却期限のお知らせ", "返却をお願いします。");
+    }
+  }
+}, 60 * 60 * 1000);
+
+app.listen(3000, () => console.log("サーバー起動: http://localhost:3000"));
+------------------------------------------------------------
+
+
+================================================================================
+方針C：Azure Static Web Apps
+================================================================================
+
+■ 概要
+  Microsoftのクラウドサービス（Azure）にフロントエンドを置き、
+  Azure FunctionsをバックエンドAPIとして使う方式。
+
+■ 向き不向き
+  - インフラ管理不要（Azureが面倒を見る）
+  - 社外からもアクセス可能（必要に応じてアクセス制限可能）
+  - Azureの利用コストが発生する
+  - 社内ルールでAzure利用可否の確認が必要
+
+■ 実装手順
+  1. Azure Static Web AppsにHTMLをデプロイ（GitHubと連携して自動デプロイ可）
+  2. Azure FunctionsをAPIエンドポイントとして作成
+  3. Azure FunctionsにclientSecret等を環境変数で設定（コードに書かない）
+  4. フロントからAPIを呼び出す形で自動処理を実行
+
+■ Azure Functions（バックエンドAPI）コード例
+------------------------------------------------------------
+// api/sendNotification/index.js（Azure Functions）
+module.exports = async function (context, req) {
+  const token = await getAppToken();  // client_credentialsフロー
+  await sendMail(token, req.body.to, req.body.subject, req.body.body);
+  context.res = { status: 200, body: "送信完了" };
+};
+------------------------------------------------------------
+
+■ フロントからAPIを呼び出す例
+------------------------------------------------------------
+// 自動処理トリガーをフロントから呼ぶ場合
+await fetch("/api/sendNotification", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    to: "user@example.com",
+    subject: "返却期限のお知らせ",
+    body: "返却をお願いします。",
+  }),
+});
+------------------------------------------------------------
+
+
+================================================================================
+方針比較まとめ
+================================================================================
+
+  方針              | 導入難易度 | インフラ管理 | 自動処理   | セキュリティ
+  ------------------|-----------|-------------|-----------|-------------
+  A: SP内埋め込み    | 低        | 不要        | PA併用必要 | 普通
+  B: 社内サーバー    | 中        | 必要        | 実装可能   | 高（社内完結）
+  C: Azure SWA      | 中〜高     | 不要        | 実装可能   | 高
+
+  → 自動処理（メール送信）を含むなら B か C が適している
+  → 社内完結・Azureコスト不要なら B（社内サーバー）
+  → インフラ管理したくない・将来的に拡張予定なら C（Azure SWA）
+
+================================================================================
+
+
+Q（要望メモ）：
+SharePointリストに使用開始日・使用終了日・機種呼称・仕向けなどのデータがあり、
+Excelのようなガントチャート形式のWebページを作りたい。
+  - 行名：呼称_仕向け（例：ModelA_JP）
+  - 列：日付
+  - 開始日〜終了日の範囲のセルを色付けして視覚化したい
+  - SharePointページ上で閲覧できる形にしたい
+
+A：
+実現可能。以下3つの手法がある。
+
+① HTML + JavaScript によるガントチャート（推奨）
+   Graph APIでSharePointリストを読み込み、日付×機種の表をブラウザで描画。
+   色付けはCSSで自由に制御できる。自由度が高くシンプル。
+
+② Excel Online埋め込み + Office Scripts
+   ExcelファイルをSPページに埋め込み、Office ScriptsでSPリストデータを
+   取得してセルに書き込み・色付けする。Excelライクな操作感を維持できる。
+
+③ Power Apps
+   Power Appsでカレンダー／ガントビューを作成し、SPページに埋め込む。
+   コーディング不要で構築できる。カスタマイズ性はやや低い。
+
+================================================================================

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HILS貸出予約ツール</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- トップバー -->
+  <header class="topbar">
+    <nav class="nav-tabs">
+      <button class="nav-btn left-tab"  data-page="form">フォーム</button>
+      <button class="nav-btn mid-tab active" data-page="view">ビュー</button>
+      <button class="nav-btn right-tab" data-page="request">申請画面</button>
+    </nav>
+    <div class="status-area">
+      <span id="status-msg" class="status-msg hidden"></span>
+    </div>
+    <div class="user-area">
+      <span id="user-name"></span>
+    </div>
+  </header>
+
+  <!-- ページコンテンツ -->
+  <main class="page-content">
+
+    <!-- ビューページ（ガントチャート） -->
+    <div id="page-view" class="page active">
+      <div class="cal-nav">
+        <button id="prev-btn"     class="btn btn-nav">◀ 前月</button>
+        <span   id="month-label"  class="month-label"></span>
+        <button id="next-btn"     class="btn btn-nav">次月 ▶</button>
+        <button id="today-btn"    class="btn btn-today">今月</button>
+        <button id="register-btn" class="btn btn-register">＋ 登録</button>
+      </div>
+      <div class="gantt-wrapper">
+        <table id="gantt-table" class="gantt-table">
+          <thead id="gantt-head"></thead>
+          <tbody id="gantt-body"></tbody>
+        </table>
+      </div>
+      <div id="info-panel" class="info-panel">
+        <span id="info-hint"    class="info-hint">予約をクリックすると詳細を表示します</span>
+        <span id="info-machine" class="info-item hidden"></span>
+        <span id="info-period"  class="info-item hidden"></span>
+        <span id="info-label"   class="info-item hidden"></span>
+        <button id="edit-btn"   class="btn btn-edit hidden">編集</button>
+      </div>
+    </div>
+
+    <!-- フォームページ（骨組み） -->
+    <div id="page-form" class="page">
+      <div class="placeholder">【フォーム】開発中</div>
+    </div>
+
+    <!-- 申請画面（骨組み） -->
+    <div id="page-request" class="page">
+      <div class="placeholder">【申請画面】開発中</div>
+    </div>
+
+  </main>
+</div>
+
+<!-- 登録・編集ダイアログ -->
+<div id="dialog-overlay" class="dialog-overlay hidden">
+  <div class="dialog-box">
+    <div class="dialog-header">
+      <span id="dialog-title">予約登録</span>
+    </div>
+    <div class="dialog-body" id="dialog-body"></div>
+    <div class="dialog-footer">
+      <button id="dialog-cancel" class="btn btn-cancel">キャンセル</button>
+      <button id="dialog-ok"     class="btn btn-ok">登録</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

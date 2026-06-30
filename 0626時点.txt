@@ -1,0 +1,88 @@
+●作成完了しました。ファイル構成はこうなっています：
+
+  Webアプリ/
+    .env.example             ← 設定値テンプレート
+    backend/
+      package.json           ← npm依存パッケージ定義
+      server.js              ← Express サーバー（API + 静的ファイル配信）
+      sp_client.js           ←SharePoint REST API クライアント
+    frontend/
+      index.html             ←メインページ
+      style.css              ←スタイル（ガントチャート含む）
+      app.js                 ←カレンダー描画・選択・登録・編集ロジック
+
+  すぐに動かす手順
+
+  サーバーPCが準備できる前でも、手元のPCで動作確認できます：
+
+  # Webアプリ/backend フォルダで
+  npm install
+  node server.js
+  →http://localhost:3000 をブラウザで開く
+
+  .env を置かなければダミーデータで動作します。
+
+  SPに繋ぐ際にやること
+
+  1. .env.example →.env にコピーして TENANT_ID 等を記入
+  2. server.js の normalizeSpItem() / toSpFields() で SP列名を実際のリストに合わせる（StartDate など）
+  3. Azure AD管理者にアプリ登録・権限申請
+
+  フロントのガントチャート（機種20台×当月日付、予約の色表示、セル範囲選択、登録/編集ダイアログ）は動くはずです。確認してみてください。
+  
+  
+  
+  
+  
+  
+  
+  Node.jsが前提の手順なので、順を追って説明します。
+
+  前提：Node.jsのインストール
+
+  まず、PCにNode.jsが入っていないと動きません。
+
+  node -v
+  をコマンドプロンプトで実行して、バージョン番号が出れば入っています。出なければ https://nodejs.org からインストールが必要です（社内PCだとIT部門承認が必要な場合あり）。
+
+  ---
+  手順の意味
+
+  npm install
+
+  Pythonでいう pip install -r requirements.txt に相当します。
+
+  backend/package.json に書いてある依存パッケージ（express, axiosなど）を自動でダウンロードして node_modules/ フォルダに入れます。初回のみ実行すればOKです。
+
+  node server.js
+
+  backend/server.js をNode.jsで起動します。これでWebサーバーが3000番ポートで待ち受けを始めます。起動中はコマンドプロンプトが占有されたままになります（止めるときは Ctrl+C）。
+
+  http://localhost:3000 をブラウザで開く
+
+  サーバーが frontend/ フォルダのファイルを配信するので、ブラウザで見られます。
+
+  ---
+  実際の操作手順
+
+  1. コマンドプロンプトを開く
+  2. cd C:\workspace\案件\2606\統合HILS貸出\Webアプリ\backend
+  3. npm install        ←初回のみ
+  4. node server.js     ←サーバー起動
+  5. ブラウザで http://localhost:3000 を開く
+
+  ---
+  .env について
+
+  .env.example をコピーして .env という名前にして、Azure AD情報を書き込むと本番のSharePointと繋がります。置かなければ server.js がダミーデータを返すので、Azure
+  AD申請前でもガントチャートの見た目を確認できます。
+
+  ---
+  まず node -v でNode.jsが入っているか確認してみてもらえますか？
+  
+  来週の手順はこれだけです：
+
+  1. コマンドプロンプトを開く
+  2. cd C:\workspace\案件\2606\統合HILS貸出\Webアプリ\backend
+  3. node server.js
+  4. ブラウザで http://localhost:3000 を開く
