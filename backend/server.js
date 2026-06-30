@@ -178,16 +178,16 @@ function toSpFields(data) {
   return f;
 }
 
-// ── ダミーデータ ──
+// ── ダミーデータ（筐体A〜T 表記）──
 const DUMMY_RESERVATIONS = [
-  { id: 1, machine: 'HELIOS-3号機',               start: '2026-06-01', end: '2026-06-05', label: '3YW 国内開発', color: '#86efac', user: '' },
-  { id: 2, machine: 'HELIOS-3号機',               start: '2026-06-09', end: '2026-06-09', label: 'A-XPX',        color: '#86efac', user: '' },
-  { id: 3, machine: 'HELIOS-8号機（進藤）',        start: '2026-06-01', end: '2026-07-04', label: '202605_006',   color: '#fca5a5', user: '' },
-  { id: 4, machine: 'HEV-BATT-5号機',             start: '2026-06-14', end: '2026-06-18', label: 'BATTテスト',   color: '#f9a8d4', user: '' },
-  { id: 5, machine: 'HELIOS-1号機',               start: '2026-06-10', end: '2026-06-15', label: 'Gen4開発',      color: '#93c5fd', user: '' },
-  { id: 6, machine: 'HELIOS-5号機',               start: '2026-06-07', end: '2026-06-12', label: 'EDR-XPX',      color: '#fcd34d', user: '' },
-  { id: 7, machine: 'HELIOS-12号機（パッタナー）', start: '2026-05-20', end: '2026-07-10', label: '長期貸出',     color: '#c4b5fd', user: '' },
-  { id: 8, machine: 'HELIOS-16号機（ウー）',       start: '2026-06-20', end: '2026-06-25', label: 'XPX-FI',      color: '#6ee7b7', user: '' },
+  { id: 1, machine: '筐体C', start: '2026-06-01', end: '2026-06-05', label: '3YW 国内開発', legendId: 'leg4', color: '#00B050', user: '' },
+  { id: 2, machine: '筐体C', start: '2026-06-09', end: '2026-06-09', label: 'A-XPX',        legendId: 'leg1', color: '#8DB4E2', user: '' },
+  { id: 3, machine: '筐体H', start: '2026-06-01', end: '2026-07-04', label: '202605_006',   legendId: 'leg3', color: '#92D050', user: '' },
+  { id: 4, machine: '筐体S', start: '2026-06-14', end: '2026-06-18', label: 'BATTテスト',   legendId: 'leg4', color: '#00B050', user: '' },
+  { id: 5, machine: '筐体A', start: '2026-06-10', end: '2026-06-15', label: 'Gen4開発',     legendId: 'leg3', color: '#92D050', user: '' },
+  { id: 6, machine: '筐体E', start: '2026-06-07', end: '2026-06-12', label: 'EDR-XPX',      legendId: 'leg1', color: '#8DB4E2', user: '' },
+  { id: 7, machine: '筐体L', start: '2026-05-20', end: '2026-07-10', label: '長期貸出',     legendId: 'leg5', color: '#FFC000', user: '' },
+  { id: 8, machine: '筐体P', start: '2026-06-20', end: '2026-06-25', label: 'XPX-FI',       legendId: 'leg2', color: '#E63283', user: '' },
 ];
 
 server.listen(PORT, () => {
