@@ -90,9 +90,12 @@ body {
 .btn-register:hover { background: #15803d; }
 .btn-edit     { background: #475569; color: #fff; height: 26px; font-size: 10px; }
 .btn-edit:hover { background: #334155; }
-/* 改修: 予約削除ボタン（赤系・編集ダイアログ内） */
+/* 改修: 予約削除ボタン（情報パネル内の編集ボタン隣へ移設） */
 .btn-delete       { background: #dc2626; color: #fff; height: 26px; font-size: 10px; }
 .btn-delete:hover { background: #b91c1c; }
+/* 改修: 📷保存ボタン */
+.btn-capture      { background: #7c3aed; color: #fff; }
+.btn-capture:hover { background: #6d28d9; }
 
 .btn-cancel {
   background: #e2e8f0; color: #475569;
@@ -346,14 +349,11 @@ body {
 
 .dialog-footer {
   display: flex;
-  justify-content: space-between; /* 改修: 削除ボタン（左）とキャンセル・保存（右）を左右分離 */
+  justify-content: flex-end; /* 改修: 削除ボタンを情報パネルへ移設したためキャンセル・保存を右寄せのみに */
   align-items: center;
   gap: 8px;
   padding: 8px 24px 16px;
 }
-/* 改修: ダイアログフッター 左右レイアウト */
-.dialog-footer-left  { display: flex; gap: 8px; }
-.dialog-footer-right { display: flex; gap: 8px; }
 
 /* フォーム行 */
 .form-row {
@@ -642,4 +642,29 @@ body {
   height: 30px;
   background: #fff;
   padding: 0;
+}
+
+/* 改修: 予備日バー（水色塗り） */
+.gantt-table td.gantt-cell.res-spare {
+  background-color: #00B0F0 !important;
+}
+.gantt-table td.gantt-cell.res-spare .res-label {
+  color: #fff;
+  font-weight: bold;
+}
+
+/* 改修: 設備故障バー（グレー斜線パターン） */
+.gantt-table td.gantt-cell.res-fault {
+  background-color: #d9d9d9 !important;
+  background-image: repeating-linear-gradient(
+    45deg,
+    #a0a0a0 0,
+    #a0a0a0 3px,
+    #d9d9d9 3px,
+    #d9d9d9 8px
+  ) !important;
+}
+.gantt-table td.gantt-cell.res-fault .res-label {
+  color: #333;
+  font-weight: bold;
 }

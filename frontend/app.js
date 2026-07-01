@@ -13,6 +13,10 @@ const HILS_SPARES = ['予備1', '予備2'];
 const WEEKDAY_JP   = ['月', '火', '水', '木', '金', '土', '日'];
 const CAL_MIN      = { year: 2025, month: 12 };
 const MAX_BIZ_DAYS = 20;
+// 改修: 予約状態（予備日・設備故障）の表示色とラベル定数
+const STATUS_SPARE_COLOR = '#00B0F0'; // 予備日：水色
+const STATUS_SPARE_TEXT  = '※予備日';
+const STATUS_FAULT_TEXT  = '故障';
 const EDGE_PX      = 10; // リサイズ端の判定幅（px）
 
 // ────────────────────────────────────────────
@@ -278,10 +282,18 @@ function buildResCellMap(year, month, reservations) {
     const isRealStart = resStart >= monthStart;
     const isRealEnd   = resEnd   <= monthEnd;
 
-    // 凡例参照で色を解決
-    const color = (res.legendId && legendMap[res.legendId])
-      ? legendMap[res.legendId].color
-      : (res.color || '#fde68a');
+    // 改修: 状態（予備日・設備故障）に応じて色を解決。通常は凡例参照
+    const resStatus = res.status || 'normal';
+    let color;
+    if (resStatus === 'spare') {
+      color = STATUS_SPARE_COLOR;
+    } else if (resStatus === 'fault') {
+      color = '#d9d9d9'; // 故障：グレー（CSSの斜線パターンと組み合わせて使用）
+    } else {
+      color = (res.legendId && legendMap[res.legendId])
+        ? legendMap[res.legendId].color
+        : (res.color || '#fde68a');
+    }
 
     let firstCol = null;
     let lastCol  = null;
@@ -295,6 +307,7 @@ function buildResCellMap(year, month, reservations) {
       map[res.machine][col] = {
         resId,
         color,
+        status:    resStatus, // 改修: 状態（normal/spare/fault）をセルマップに転記
         label:     res.label || '',
         applicant: res.applicant || '', // 申請者名をセルマップに転記（バー上ラベル表示に使用）
         isStart:   false,
@@ -486,6 +499,9 @@ function renderCalendar() {
 
         if (resInfo.isStart) td.classList.add('res-edge-left');
         if (resInfo.isEnd)   td.classList.add('res-edge-right');
+        // 改修: 状態クラスを付与（予備日：res-spare / 設備故障：res-fault）
+        if (resInfo.status === 'spare') td.classList.add('res-spare');
+        if (resInfo.status === 'fault') td.classList.add('res-fault');
         // 隣セルの同一予約判定でセグメント端クラスを付与（連続バー化・選択外枠1本化に使用）
         const sameLeft  = resCells[machine]?.[col - 1]?.resId === resInfo.resId;
         const sameRight = resCells[machine]?.[col + 1]?.resId === resInfo.resId;
@@ -495,11 +511,18 @@ function renderCalendar() {
 
         if (resInfo.isStart) {
           const labelEl = document.createElement('span');
-          labelEl.className   = 'res-label';
-          // 申請者名がある場合は「申請者名）ラベル」形式で表示
-          labelEl.textContent = resInfo.applicant
-            ? `${resInfo.applicant}）${resInfo.label}`
-            : resInfo.label;
+          labelEl.className = 'res-label';
+          // 改修: 状態に応じてラベルを切り替え（予備日・故障は専用テキスト優先）
+          if (resInfo.status === 'spare') {
+            labelEl.textContent = STATUS_SPARE_TEXT;
+          } else if (resInfo.status === 'fault') {
+            labelEl.textContent = STATUS_FAULT_TEXT;
+          } else {
+            // 申請者名がある場合は「申請者名）ラベル」形式で表示
+            labelEl.textContent = resInfo.applicant
+              ? `${resInfo.applicant}）${resInfo.label}`
+              : resInfo.label;
+          }
           td.appendChild(labelEl);
         }
 
@@ -880,10 +903,12 @@ function updateInfoPanel() {
   const label     = document.getElementById('info-label');
   const applicant = document.getElementById('info-applicant'); // 申請者表示要素
   const editBtn   = document.getElementById('edit-btn');
+  // 改修: 削除ボタン（情報パネルへ移設）
+  const delBtn    = document.getElementById('info-delete-btn');
 
   if (selectedResId === null || !reservations[selectedResId]) {
     hint.classList.remove('hidden');
-    [machine, period, label, applicant, editBtn].forEach(el => el.classList.add('hidden'));
+    [machine, period, label, applicant, editBtn, delBtn].forEach(el => el.classList.add('hidden'));
     return;
   }
 
@@ -900,10 +925,15 @@ function updateInfoPanel() {
   }
 
   hint.classList.add('hidden');
-  [machine, period, label, editBtn].forEach(el => el.classList.remove('hidden'));
+  // 改修: 編集ボタンと削除ボタンを同じタイミングで表示
+  [machine, period, label, editBtn, delBtn].forEach(el => el.classList.remove('hidden'));
   machine.textContent = `筐体:  ${res.machine}`;
   period.textContent  = `期間:  ${periodStr}  （${biz}営業日）`;
-  label.textContent   = `ラベル:  ${res.label || ''}`;
+  // 改修: 状態が通常以外の場合は状態名を優先表示
+  const statusLabel = res.status === 'spare' ? STATUS_SPARE_TEXT
+                    : res.status === 'fault' ? STATUS_FAULT_TEXT
+                    : (res.label || '');
+  label.textContent = `ラベル:  ${statusLabel}`;
 
   // 申請者：値がある場合のみパネルに表示
   if (res.applicant) {
@@ -1092,6 +1122,20 @@ document.getElementById('edit-btn').addEventListener('click', () => {
   if (state.selectedResId !== null) openEditDialog(state.selectedResId);
 });
 
+// 改修: 削除ボタンを情報パネルへ移設 ─ 編集ボタン隣のクリックで選択中予約を削除
+document.getElementById('info-delete-btn').addEventListener('click', () => {
+  if (state.selectedResId !== null) deleteReservation(state.selectedResId);
+});
+
+// 改修: 削除処理を共通関数として切り出し（編集ダイアログ内から情報パネルへ移設に伴い整理）
+function deleteReservation(resId) {
+  if (!confirm('この予約を削除しますか？')) return;
+  state.reservations.splice(resId, 1);
+  saveReservations(state.reservations);
+  clearSelection(); // 選択解除（selectedResId = null + updateInfoPanel）
+  renderCalendar();
+}
+
 function openRegisterDialog() {
   const sel = state.selectedCells;
   if (!sel.size) {
@@ -1116,6 +1160,7 @@ function openRegisterDialog() {
     legendId:  defLeg,
     applicant: '', // 申請者（新規登録時は空）
     remark:    '', // 備考（新規登録時は空）
+    status:    'normal', // 改修: 新規登録はデフォルトで通常状態
   }, 'register');
 }
 
@@ -1130,6 +1175,7 @@ function openEditDialog(resId) {
     legendId:  res.legendId  || (_legend.length > 0 ? _legend[0].id : ''),
     applicant: res.applicant || '', // 既存の申請者（未設定の場合は空文字）
     remark:    res.remark    || '', // 既存の備考（未設定の場合は空文字）
+    status:    res.status    || 'normal', // 改修: 既存の状態（未設定の場合は通常）
   }, 'edit', resId);
 }
 
@@ -1148,22 +1194,7 @@ function showDialog(title, data, mode, resId = null) {
 
   titleEl.textContent = title;
   okBtn.textContent   = mode === 'register' ? '登録' : '保存';
-
-  // 改修: 削除ボタンの表示制御（編集モードのみ表示、登録モードは非表示）
-  const deleteBtnEl = document.getElementById('dialog-delete');
-  if (mode === 'edit' && resId !== null) {
-    deleteBtnEl.classList.remove('hidden');
-    deleteBtnEl.onclick = () => {
-      if (!confirm('この予約を削除しますか？')) return;
-      overlay.classList.add('hidden');
-      state.reservations.splice(resId, 1);
-      saveReservations(state.reservations);
-      clearSelection(); // 選択解除（selectedResId = null + updateInfoPanel）
-      renderCalendar();
-    };
-  } else {
-    deleteBtnEl.classList.add('hidden');
-  }
+  // 改修: 削除ボタンを情報パネルへ移設したため、ここでの削除ボタン制御は廃止
 
   bodyEl.innerHTML = `
     <div class="form-row">
@@ -1175,6 +1206,14 @@ function showDialog(title, data, mode, resId = null) {
       </select>
     </div>
     <div class="form-row">
+      <label>状態:</label>
+      <select id="f-status">
+        <option value="normal"${(data.status || 'normal') === 'normal' ? ' selected' : ''}>通常</option>
+        <option value="spare"${data.status === 'spare' ? ' selected' : ''}>予備日</option>
+        <option value="fault"${data.status === 'fault' ? ' selected' : ''}>設備故障</option>
+      </select>
+    </div>
+    <div class="form-row">
       <label>開始日:</label>
       <input type="date" id="f-start" value="${data.startIso}">
     </div>
@@ -1182,22 +1221,22 @@ function showDialog(title, data, mode, resId = null) {
       <label>終了日:</label>
       <input type="date" id="f-end" value="${data.endIso}">
     </div>
-    <div class="form-row">
+    <div id="form-row-label" class="form-row">
       <label>ラベル:</label>
       <input type="text" id="f-label" value="${data.label}" placeholder="プロジェクト名など">
     </div>
-    <div class="form-row">
+    <div id="form-row-legend" class="form-row">
       <label>分類:</label>
       <div class="legend-select-wrap">
         <div id="f-swatch" class="legend-select-swatch"></div>
         <select id="f-legend">${buildLegendSelect(data.legendId)}</select>
       </div>
     </div>
-    <div class="form-row">
+    <div id="form-row-applicant" class="form-row">
       <label>申請者:</label>
       <input type="text" id="f-applicant" value="${data.applicant || ''}" placeholder="氏名など">
     </div>
-    <div class="form-row">
+    <div id="form-row-remark" class="form-row">
       <label>備考:</label>
       <input type="text" id="f-remark" list="remark-options"
              value="${data.remark || ''}" placeholder="★ / ☆ / 自由記入">
@@ -1247,9 +1286,27 @@ function showDialog(title, data, mode, resId = null) {
   document.getElementById('f-start').addEventListener('change', updateBiz);
   document.getElementById('f-end').addEventListener('change', updateBiz);
   updateBiz();
+
+  // 改修: 状態変更時に通常以外のフォーム行をグレーアウト・無効化
+  function updateStatusFields() {
+    const status   = document.getElementById('f-status').value;
+    const isNormal = status === 'normal';
+    ['form-row-label', 'form-row-legend', 'form-row-applicant', 'form-row-remark'].forEach(id => {
+      const row = document.getElementById(id);
+      if (row) row.style.opacity = isNormal ? '1' : '0.4';
+    });
+    ['f-label', 'f-legend', 'f-applicant', 'f-remark'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = !isNormal;
+    });
+  }
+  document.getElementById('f-status').addEventListener('change', updateStatusFields);
+  updateStatusFields();
+
   overlay.classList.remove('hidden');
 
   okBtn.onclick = () => {
+    const status   = document.getElementById('f-status').value; // 改修: 状態を取得
     const legendId = document.getElementById('f-legend').value;
     const lm       = getLegendMap(_legend);
     const color    = lm[legendId] ? lm[legendId].color : '#fde68a';
@@ -1262,6 +1319,7 @@ function showDialog(title, data, mode, resId = null) {
       color,
       applicant: document.getElementById('f-applicant').value.trim(), // 申請者を保存
       remark:    document.getElementById('f-remark').value.trim(),    // 備考を保存
+      status,    // 改修: 状態を保存（normal/spare/fault）
     };
     overlay.classList.add('hidden');
     if (mode === 'register') {
@@ -1343,3 +1401,88 @@ async function init() {
 }
 
 init();
+
+// ────────────────────────────────────────────
+// 改修: 画像保存機能（📷保存ボタン）
+//   GUI版 _save_screenshot（app.py:1892）相当。
+//   表と凡例パネルを別々にキャプチャして横連結する方式を採用。
+//   .view-body をまとめて撮ると表(min-width:900px)が凡例領域に
+//   オーバーフローして重なり、凡例が見切れる問題を回避するため。
+// ────────────────────────────────────────────
+document.getElementById('capture-btn').addEventListener('click', saveCalendarImage);
+
+async function saveCalendarImage() {
+  const captureBtn  = document.getElementById('capture-btn');
+  const ganttTable  = document.getElementById('gantt-table');
+  const legendPanel = document.getElementById('legend-panel');
+  if (!ganttTable) return;
+
+  // キャプチャ中はボタンを無効化してUI競合を防ぐ
+  captureBtn.disabled = true;
+  setStatus('画像を生成中...', 'orange');
+
+  // ── 凡例パネルの高さ制約を一時解除（overflow-y:autoで内容がクリップされるため） ──
+  const prevLegendOverflowY  = legendPanel ? legendPanel.style.overflowY  : '';
+  const prevLegendHeight     = legendPanel ? legendPanel.style.height     : '';
+  const prevLegendMaxHeight  = legendPanel ? legendPanel.style.maxHeight  : '';
+  if (legendPanel) {
+    legendPanel.style.overflowY = 'visible';
+    legendPanel.style.height    = 'auto';
+    legendPanel.style.maxHeight = 'none';
+  }
+
+  try {
+    const OPT = { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false };
+
+    // ① 表（#gantt-table）を単独キャプチャ
+    //    wrapper のスクロールに関係なく表全体が得られる
+    const tableCanvas = await html2canvas(ganttTable, OPT);
+
+    // ② 凡例パネルを単独キャプチャ（凡例なしの場合は null）
+    const legendCanvas = legendPanel
+      ? await html2canvas(legendPanel, OPT)
+      : null;
+
+    // ③ 合成 canvas を作成（左:表 / 右:凡例、上端揃え）
+    const totalW = tableCanvas.width + (legendCanvas ? legendCanvas.width : 0);
+    const totalH = Math.max(tableCanvas.height, legendCanvas ? legendCanvas.height : 0);
+    const merged = document.createElement('canvas');
+    merged.width  = totalW;
+    merged.height = totalH;
+    const ctx = merged.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, totalW, totalH);
+    ctx.drawImage(tableCanvas, 0, 0);
+    if (legendCanvas) ctx.drawImage(legendCanvas, tableCanvas.width, 0);
+
+    // 保存ファイル名: 予約表_YYYYMMDD.png（保存実行日）
+    const now = new Date();
+    const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const filename = `予約表_${ymd}.png`;
+
+    // 合成 Canvas → Blob → ダウンロード
+    merged.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement('a');
+      a.href     = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      setStatus(`保存しました: ${filename}`, '#15803d');
+      // 3秒後にステータスをクリア
+      setTimeout(() => setStatus(''), 3000);
+    }, 'image/png');
+
+  } catch (err) {
+    console.error('画像保存エラー:', err);
+    setStatus('画像の保存に失敗しました', '#e05252');
+  } finally {
+    // ── 凡例パネルのスタイルを元に戻す（try/finallyで確実に復元） ──
+    if (legendPanel) {
+      legendPanel.style.overflowY = prevLegendOverflowY;
+      legendPanel.style.height    = prevLegendHeight;
+      legendPanel.style.maxHeight = prevLegendMaxHeight;
+    }
+    captureBtn.disabled = false;
+  }
+}
