@@ -76,8 +76,15 @@
     </div>
     <div class="dialog-body" id="dialog-body"></div>
     <div class="dialog-footer">
-      <button id="dialog-cancel" class="btn btn-cancel">キャンセル</button>
-      <button id="dialog-ok"     class="btn btn-ok">登録</button>
+      <!-- 削除ボタン（左側）：編集モード時のみ表示 -->
+      <div class="dialog-footer-left">
+        <button id="dialog-delete" class="btn btn-delete hidden">削除</button>
+      </div>
+      <!-- キャンセル・保存ボタン（右側） -->
+      <div class="dialog-footer-right">
+        <button id="dialog-cancel" class="btn btn-cancel">キャンセル</button>
+        <button id="dialog-ok"     class="btn btn-ok">登録</button>
+      </div>
     </div>
   </div>
 </div>

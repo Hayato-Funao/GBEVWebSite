@@ -90,6 +90,9 @@ body {
 .btn-register:hover { background: #15803d; }
 .btn-edit     { background: #475569; color: #fff; height: 26px; font-size: 10px; }
 .btn-edit:hover { background: #334155; }
+/* 改修: 予約削除ボタン（赤系・編集ダイアログ内） */
+.btn-delete       { background: #dc2626; color: #fff; height: 26px; font-size: 10px; }
+.btn-delete:hover { background: #b91c1c; }
 
 .btn-cancel {
   background: #e2e8f0; color: #475569;
@@ -343,10 +346,14 @@ body {
 
 .dialog-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between; /* 改修: 削除ボタン（左）とキャンセル・保存（右）を左右分離 */
+  align-items: center;
   gap: 8px;
   padding: 8px 24px 16px;
 }
+/* 改修: ダイアログフッター 左右レイアウト */
+.dialog-footer-left  { display: flex; gap: 8px; }
+.dialog-footer-right { display: flex; gap: 8px; }
 
 /* フォーム行 */
 .form-row {
@@ -558,3 +565,81 @@ body {
 /* ── 連続バー化：セル間縦境界線を完全除去 ── */
 /* 右隣が同一予約のセルはborder-rightを除去（transparent は薄線が残るため none を使用） */
 .gantt-table td.gantt-cell.res-cell.res-join-right { border-right: none; }
+
+/* ── 改修: 筐体行ヘッダー（機種名セル）── */
+/* display: flex はやめ table-cell のまま使用（flex化すると行高が縮んで行間に白余白が出るため）。
+   削除ボタン（×）は絶対配置で内包する。overflow:visible にして絶対配置子が clip されないようにする */
+.gantt-table td.machine-col {
+  overflow: visible;    /* 絶対配置の削除ボタンが clip されないよう visible に変更 */
+  vertical-align: middle;
+}
+/* 機種名テキストspan（削除ボタンと重ならないよう右パディングを確保し、省略表示） */
+.machine-name {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 20px; /* 絶対配置の削除ボタン（16px）と重ならないよう右端に余白 */
+}
+/* 改修: 筐体削除ボタン（×）：絶対配置で右端に配置、hover時のみ表示 */
+.machine-del-btn {
+  position: absolute;   /* td.machine-col（position:sticky）を包含ブロックとして使用 */
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #6b7280;
+  font-size: 11px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.gantt-table td.machine-col:hover .machine-del-btn { opacity: 1; }
+.machine-del-btn:hover { background: #fca5a5; color: #dc2626; opacity: 1 !important; }
+
+/* 改修: 筐体追加行（筐体Tの下の「＋」ボタン行）
+   背景色は指定しない → machine-col は .gantt-table td.machine-col (#e2e8f0)、
+   日付セルは .gantt-table td.gantt-cell (#fff) のスタイルをそのまま適用する */
+.machine-add-row td {
+  height: 30px; /* 通常セルと同じ高さ */
+}
+.machine-add-row td.machine-col {
+  background: #e2e8f0; /* 改修: 他の筐体行と同一背景色に統一 */
+  text-align: center;  /* 「＋」ボタンをtable-cell内で中央寄せ（flexなし） */
+  vertical-align: middle;
+}
+/* 丸型「＋」追加ボタン */
+.machine-add-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid #94a3b8;
+  background: #f0f4f8;
+  color: #374151;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.machine-add-btn:hover { background: #e0e7ef; border-color: #4f46e5; color: #4f46e5; }
+/* 追加行のガントセルはクリック・ホバー対象外（背景は gantt-cell / weekend のスタイルに従う） */
+.gantt-table td.machine-add-cell { cursor: default; }
+
+/* 改修: 予備区切り行（メイン筐体と予備の間の空白行：通常セル1行分の高さ・装飾なし） */
+.spare-divider-row td {
+  height: 30px;
+  background: #fff;
+  padding: 0;
+}

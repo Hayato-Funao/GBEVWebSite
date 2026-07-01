@@ -3,11 +3,12 @@
 // ────────────────────────────────────────────
 // 定数
 // ────────────────────────────────────────────
+// 改修: メイン筐体のデフォルト一覧（予備は別管理）
 const HILS_MACHINES = [
   ...'ABCDEFGHIJKLMNOPQRST'.split('').map(c => '筐体' + c),
-  '予備1',
-  '予備2',
 ];
+// 改修: 予備のデフォルト一覧（メイン筐体と分離してグリッド最下部に配置）
+const HILS_SPARES = ['予備1', '予備2'];
 
 const WEEKDAY_JP   = ['月', '火', '水', '木', '金', '土', '日'];
 const CAL_MIN      = { year: 2025, month: 12 };
@@ -45,7 +46,8 @@ const LEGEND_SEED = [
 
 const LEGEND_STORAGE_KEY  = 'hils_legend_v1';
 const RES_STORAGE_KEY     = 'hils_reservations_v1';
-const MACHINE_STORAGE_KEY = 'hils_machines_v1';     // 環境名リストのlocalStorageキー
+const MACHINE_STORAGE_KEY = 'hils_machines_v1';     // メイン筐体リストのlocalStorageキー
+const SPARE_STORAGE_KEY   = 'hils_spares_v1';       // 改修: 予備リストのlocalStorageキー
 
 // ────────────────────────────────────────────
 // 凡例ストア（localStorage）
@@ -89,16 +91,40 @@ let _legend = loadLegend();
 // 環境名ストア（localStorage）
 // ────────────────────────────────────────────
 function loadMachines() {
-  // localStorageに保存済みの環境名リストを読み込む。無ければデフォルト値のコピーを返す
+  // localStorageに保存済みのメイン筐体リストを読み込む。無ければデフォルト値のコピーを返す
+  // 後方互換: 旧データに予備行が含まれている場合はメインリストから除外する
   try {
     const raw = localStorage.getItem(MACHINE_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const list = JSON.parse(raw);
+      return list.filter(name => !name.startsWith('予備'));
+    }
   } catch (_) {}
-  return HILS_MACHINES.slice(); // デフォルト値（初期筐体名リスト）のコピーを返す
+  return HILS_MACHINES.slice();
 }
 function saveMachines(machines) {
-  // 編集後の環境名リストをlocalStorageに保存する
+  // 編集後のメイン筐体リストをlocalStorageに保存する
   localStorage.setItem(MACHINE_STORAGE_KEY, JSON.stringify(machines));
+}
+// 改修: 予備リストをlocalStorageから読み込む（無ければデフォルト値を返す）
+// 後方互換: 旧データのメインリストに予備が含まれていた場合はそこから抽出する
+function loadSpares() {
+  try {
+    const raw = localStorage.getItem(SPARE_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+    // 旧データのメインリストに予備が含まれていた場合は抽出してマイグレーション
+    const mainRaw = localStorage.getItem(MACHINE_STORAGE_KEY);
+    if (mainRaw) {
+      const mainList = JSON.parse(mainRaw);
+      const spares = mainList.filter(name => name.startsWith('予備'));
+      if (spares.length > 0) return spares;
+    }
+  } catch (_) {}
+  return HILS_SPARES.slice();
+}
+// 改修: 編集後の予備リストをlocalStorageに保存する
+function saveSpares(spares) {
+  localStorage.setItem(SPARE_STORAGE_KEY, JSON.stringify(spares));
 }
 
 // ────────────────────────────────────────────
@@ -125,11 +151,17 @@ const state = {
   year:          new Date().getFullYear(),
   month:         new Date().getMonth() + 1,
   reservations:  [],
-  machines:      [],               // 環境名リスト（init()でlocalStorageから読み込み）
+  machines:      [],               // メイン筐体リスト（init()でlocalStorageから読み込み）
+  spares:        [],               // 改修: 予備リスト（init()でlocalStorageから読み込み）
   selectedCells: new Set(),
   selectedResId: null,
   anchorCell:    null,
 };
+
+// 改修: メイン筐体と予備を結合した全環境名リストを返す（行インデックス計算に使用）
+function getAllMachines() {
+  return [...state.machines, ...state.spares];
+}
 
 // ────────────────────────────────────────────
 // 日付ユーティリティ
@@ -229,7 +261,7 @@ async function fetchReservations() {
 function buildResCellMap(year, month, reservations) {
   const legendMap  = getLegendMap(_legend);
   const map        = {};
-  state.machines.forEach(m => { map[m] = {}; }); // 可変環境名リストを参照
+  getAllMachines().forEach(m => { map[m] = {}; }); // 改修: メイン筐体＋予備の全環境名を参照
 
   const monthStart = new Date(year, month - 1, 1);
   const monthEnd   = new Date(year, month - 1, daysInMonth(year, month));
@@ -339,18 +371,52 @@ function renderCalendar() {
     _drag.ghostCells.forEach(k => ghostKeys.add(k));
   }
 
-  state.machines.forEach((machine, rowIdx) => { // 可変環境名リストを参照
+  // 改修: 行描画ヘルパー（メイン筐体・予備とも共用）
+  // rowIdx は getAllMachines() 上の通算インデックス（ドラッグ・セル data-row に使用）
+  function buildMachineRow(machine, rowIdx) {
     const tr = document.createElement('tr');
 
+    // 機種名セル（左固定列）
     const tdMachine = document.createElement('td');
-    tdMachine.className   = 'machine-col';
-    tdMachine.textContent = machine;
-    tdMachine.title       = `${machine}（ダブルクリックで編集）`;
-    tr.appendChild(tdMachine);
+    tdMachine.className = 'machine-col';
+    tdMachine.title     = `${machine}（ダブルクリックで編集）`;
+
+    // 機種名テキストをspan要素で内包（削除ボタンと並列表示のため）
+    const nameSpan = document.createElement('span');
+    nameSpan.className   = 'machine-name';
+    nameSpan.textContent = machine;
+    tdMachine.appendChild(nameSpan);
+
+    // 改修: 削除ボタン（×）－hover時のみ表示。予約が存在する行は削除不可
+    const machineDelBtn = document.createElement('button');
+    machineDelBtn.className   = 'machine-del-btn';
+    machineDelBtn.textContent = '×';
+    machineDelBtn.title       = '削除';
+    machineDelBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      // この筐体名を参照する予約が存在する場合は削除不可
+      const hasRes = state.reservations.some(r => r.machine === machine);
+      if (hasRes) {
+        alert(`「${machine}」には予約が登録されているため削除できません。\n先に予約を削除してください。`);
+        return;
+      }
+      if (!confirm(`「${machine}」を削除しますか？`)) return;
+      if (rowIdx < state.machines.length) {
+        // メイン筐体リストから削除
+        state.machines.splice(rowIdx, 1);
+        saveMachines(state.machines);
+      } else {
+        // 予備リストから削除
+        state.spares.splice(rowIdx - state.machines.length, 1);
+        saveSpares(state.spares);
+      }
+      renderCalendar();
+    });
+    tdMachine.appendChild(machineDelBtn);
 
     // 行ヘッダーダブルクリックで環境名インライン編集
     tdMachine.addEventListener('dblclick', () => {
-      const oldName   = state.machines[rowIdx];
+      const oldName   = getAllMachines()[rowIdx]; // 改修: getAll経由でrowIdxを参照
       const editInput = document.createElement('input');
       editInput.type      = 'text';
       editInput.value     = oldName;
@@ -363,9 +429,14 @@ function renderCalendar() {
       function commitEdit() {
         const newName = editInput.value.trim();
         if (newName && newName !== oldName) {
-          // 環境名リストを更新してlocalStorageに保存
-          state.machines[rowIdx] = newName;
-          saveMachines(state.machines);
+          // 改修: メイン筐体か予備かに応じてリストを更新してlocalStorageに保存
+          if (rowIdx < state.machines.length) {
+            state.machines[rowIdx] = newName;
+            saveMachines(state.machines);
+          } else {
+            state.spares[rowIdx - state.machines.length] = newName;
+            saveSpares(state.spares);
+          }
           // 旧名を参照している予約を新名へ追従（リネームで既存予約バーが消えないようにする）
           state.reservations = state.reservations.map(res =>
             res.machine === oldName ? { ...res, machine: newName } : res
@@ -381,6 +452,8 @@ function renderCalendar() {
       });
       editInput.addEventListener('blur', commitEdit); // フォーカス外れで確定
     });
+
+    tr.appendChild(tdMachine);
 
     for (let col = 0; col < days; col++) {
       const d       = col + 1;
@@ -464,7 +537,75 @@ function renderCalendar() {
 
       tr.appendChild(td);
     }
-    tbody.appendChild(tr);
+    return tr;
+  }
+
+  // 改修: メイン筐体行を描画（rowIdx は getAllMachines() 上の通算インデックス）
+  state.machines.forEach((machine, localIdx) => {
+    tbody.appendChild(buildMachineRow(machine, localIdx));
+  });
+
+  // 改修: 筐体追加行（筐体T の下に「＋」ボタン行を挿入）
+  {
+    const addTr = document.createElement('tr');
+    addTr.className = 'machine-add-row';
+
+    const addTdHeader = document.createElement('td');
+    addTdHeader.className = 'machine-col';
+
+    // 丸型「＋」ボタン：押下時に筐体名を入力して追加する
+    const addBtn = document.createElement('button');
+    addBtn.className   = 'machine-add-btn';
+    addBtn.textContent = '＋';
+    addBtn.title       = '筐体を追加';
+    addBtn.addEventListener('click', () => {
+      // 次の筐体名候補（アルファベット連番）をpromptの初期値として算出
+      const lastMain = state.machines[state.machines.length - 1] || '筐体T';
+      const lastChar = lastMain.replace('筐体', '');
+      const nextCode = lastChar.length === 1
+        ? String.fromCharCode(lastChar.charCodeAt(0) + 1)
+        : '';
+      const defName  = nextCode ? `筐体${nextCode}` : '';
+      const input    = prompt('追加する筐体名を入力してください', defName);
+      if (!input || !input.trim()) return;
+      const trimmed = input.trim();
+      // 重複チェック（メイン筐体・予備を含む全名称と照合）
+      if (getAllMachines().includes(trimmed)) {
+        alert(`「${trimmed}」はすでに存在します。`);
+        return;
+      }
+      state.machines.push(trimmed);
+      saveMachines(state.machines);
+      renderCalendar();
+    });
+    addTdHeader.appendChild(addBtn);
+    addTr.appendChild(addTdHeader);
+
+    // 追加行の日付列（空セル：weekend色のみ適用、クリック対象外）
+    for (let col = 0; col < days; col++) {
+      const wday  = (firstDay + col) % 7;
+      const isWkd = (wday === 0 || wday === 6);
+      const addTd = document.createElement('td');
+      addTd.className = 'gantt-cell machine-add-cell' + (isWkd ? ' weekend' : '');
+      addTr.appendChild(addTd);
+    }
+    tbody.appendChild(addTr);
+  }
+
+  // 改修: 予備区切り行（メイン筐体と予備を視覚的に分離するスペーサ行）
+  {
+    const divTr = document.createElement('tr');
+    divTr.className = 'spare-divider-row';
+    const divTd = document.createElement('td');
+    divTd.colSpan = days + 1; // 日付列数 + 機種名列
+    divTr.appendChild(divTd);
+    tbody.appendChild(divTr);
+  }
+
+  // 改修: 予備行を描画（rowIdx はメイン筐体数分オフセットした通算インデックス）
+  state.spares.forEach((machine, localIdx) => {
+    const rowIdx = state.machines.length + localIdx;
+    tbody.appendChild(buildMachineRow(machine, rowIdx));
   });
 }
 
@@ -612,7 +753,7 @@ function onDragResMove(e) {
   // プレビュー / ゴーストセルを算出
   const previewCells = new Set();
   const ghostCells   = new Set();
-  const newMachine   = state.machines[newRow]; // 可変環境名リストを参照
+  const newMachine   = getAllMachines()[newRow]; // 改修: メイン筐体＋予備の全環境名を参照
 
   for (let d = new Date(newStart); d <= newEnd; d.setDate(d.getDate() + 1)) {
     if (d.getFullYear() === year && d.getMonth() === month - 1) {
@@ -641,7 +782,7 @@ function onDragResUp() {
   if (_drag.didMove && _drag.newStart && _drag.newEnd) {
     const { resId, newStart, newEnd, newRow } = _drag;
     const res        = state.reservations[resId];
-    const newMachine = state.machines[newRow]; // 可変環境名リストを参照
+    const newMachine = getAllMachines()[newRow]; // 改修: メイン筐体＋予備の全環境名を参照
     if (res && !checkOverlap(resId, newMachine, newStart, newEnd)) {
       state.reservations[resId] = {
         ...res,
@@ -968,7 +1109,7 @@ function openRegisterDialog() {
   const defLeg   = _legend.length > 0 ? _legend[0].id : '';
 
   showDialog('予約登録', {
-    machine:   state.machines[row], // 可変環境名リストを参照
+    machine:   getAllMachines()[row], // 改修: メイン筐体＋予備の全環境名を参照
     startIso:  `${year}-${String(month).padStart(2,'0')}-${String(startDay).padStart(2,'0')}`,
     endIso:    `${year}-${String(month).padStart(2,'0')}-${String(endDay).padStart(2,'0')}`,
     label:     '',
@@ -1008,11 +1149,27 @@ function showDialog(title, data, mode, resId = null) {
   titleEl.textContent = title;
   okBtn.textContent   = mode === 'register' ? '登録' : '保存';
 
+  // 改修: 削除ボタンの表示制御（編集モードのみ表示、登録モードは非表示）
+  const deleteBtnEl = document.getElementById('dialog-delete');
+  if (mode === 'edit' && resId !== null) {
+    deleteBtnEl.classList.remove('hidden');
+    deleteBtnEl.onclick = () => {
+      if (!confirm('この予約を削除しますか？')) return;
+      overlay.classList.add('hidden');
+      state.reservations.splice(resId, 1);
+      saveReservations(state.reservations);
+      clearSelection(); // 選択解除（selectedResId = null + updateInfoPanel）
+      renderCalendar();
+    };
+  } else {
+    deleteBtnEl.classList.add('hidden');
+  }
+
   bodyEl.innerHTML = `
     <div class="form-row">
       <label>筐体:</label>
       <select id="f-machine">
-        ${state.machines.map(m =>
+        ${getAllMachines().map(m =>
           `<option value="${m}"${m === data.machine ? ' selected' : ''}>${m}</option>`
         ).join('')}
       </select>
@@ -1158,6 +1315,8 @@ function mapLegacyMachine(name) {
 async function init() {
   // 環境名リストをlocalStorageから読み込む（無ければデフォルト値を使用）
   state.machines = loadMachines();
+  // 改修: 予備リストをlocalStorageから読み込む（無ければデフォルト値を使用）
+  state.spares   = loadSpares();
 
   const saved = loadReservations();
   if (saved !== null) {
