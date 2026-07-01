@@ -43,8 +43,9 @@ const LEGEND_SEED = [
   { id: 'leg8', name: '日程仮置き',             color: '#FFFF00' },
 ];
 
-const LEGEND_STORAGE_KEY = 'hils_legend_v1';
-const RES_STORAGE_KEY    = 'hils_reservations_v1';
+const LEGEND_STORAGE_KEY  = 'hils_legend_v1';
+const RES_STORAGE_KEY     = 'hils_reservations_v1';
+const MACHINE_STORAGE_KEY = 'hils_machines_v1';     // 環境名リストのlocalStorageキー
 
 // ────────────────────────────────────────────
 // 凡例ストア（localStorage）
@@ -67,8 +68,38 @@ function getLegendMap(legend) {
 function genLegendId() {
   return 'leg_' + Date.now() + Math.random().toString(36).slice(2, 5);
 }
+// 改修: 指定インデックス以外の凡例が使用中の色集合を返す（小文字HEXで正規化）
+function getUsedLegendColors(excludeIdx) {
+  const used = new Set();
+  _legend.forEach((leg, i) => {
+    if (i === excludeIdx) return;
+    if (leg.color) used.add(leg.color.toLowerCase());
+  });
+  return used;
+}
+// 改修: パレットから未使用の先頭色を返す（全色使用済みの場合は null）
+function pickUnusedPaletteColor() {
+  const used = getUsedLegendColors(-1);
+  return LEGEND_PALETTE.find(hex => !used.has(hex.toLowerCase())) || null;
+}
 
 let _legend = loadLegend();
+
+// ────────────────────────────────────────────
+// 環境名ストア（localStorage）
+// ────────────────────────────────────────────
+function loadMachines() {
+  // localStorageに保存済みの環境名リストを読み込む。無ければデフォルト値のコピーを返す
+  try {
+    const raw = localStorage.getItem(MACHINE_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (_) {}
+  return HILS_MACHINES.slice(); // デフォルト値（初期筐体名リスト）のコピーを返す
+}
+function saveMachines(machines) {
+  // 編集後の環境名リストをlocalStorageに保存する
+  localStorage.setItem(MACHINE_STORAGE_KEY, JSON.stringify(machines));
+}
 
 // ────────────────────────────────────────────
 // 予約ストア（localStorage）
@@ -94,6 +125,7 @@ const state = {
   year:          new Date().getFullYear(),
   month:         new Date().getMonth() + 1,
   reservations:  [],
+  machines:      [],               // 環境名リスト（init()でlocalStorageから読み込み）
   selectedCells: new Set(),
   selectedResId: null,
   anchorCell:    null,
@@ -197,7 +229,7 @@ async function fetchReservations() {
 function buildResCellMap(year, month, reservations) {
   const legendMap  = getLegendMap(_legend);
   const map        = {};
-  HILS_MACHINES.forEach(m => { map[m] = {}; });
+  state.machines.forEach(m => { map[m] = {}; }); // 可変環境名リストを参照
 
   const monthStart = new Date(year, month - 1, 1);
   const monthEnd   = new Date(year, month - 1, daysInMonth(year, month));
@@ -231,13 +263,17 @@ function buildResCellMap(year, month, reservations) {
       map[res.machine][col] = {
         resId,
         color,
-        label:   res.label || '',
-        isStart: false,
-        isEnd:   false,
+        label:     res.label || '',
+        applicant: res.applicant || '', // 申請者名をセルマップに転記（バー上ラベル表示に使用）
+        isStart:   false,
+        isEnd:     false,
       };
     }
     if (firstCol !== null) map[res.machine][firstCol].isStart = isRealStart;
-    if (lastCol  !== null) map[res.machine][lastCol].isEnd   = isRealEnd;
+    if (lastCol  !== null) {
+      map[res.machine][lastCol].isEnd  = isRealEnd;
+      map[res.machine][lastCol].remark = res.remark || ''; // 備考を終了列セルに格納して描画に使用
+    }
   });
 
   return map;
@@ -303,14 +339,48 @@ function renderCalendar() {
     _drag.ghostCells.forEach(k => ghostKeys.add(k));
   }
 
-  HILS_MACHINES.forEach((machine, rowIdx) => {
+  state.machines.forEach((machine, rowIdx) => { // 可変環境名リストを参照
     const tr = document.createElement('tr');
 
     const tdMachine = document.createElement('td');
     tdMachine.className   = 'machine-col';
     tdMachine.textContent = machine;
-    tdMachine.title       = machine;
+    tdMachine.title       = `${machine}（ダブルクリックで編集）`;
     tr.appendChild(tdMachine);
+
+    // 行ヘッダーダブルクリックで環境名インライン編集
+    tdMachine.addEventListener('dblclick', () => {
+      const oldName   = state.machines[rowIdx];
+      const editInput = document.createElement('input');
+      editInput.type      = 'text';
+      editInput.value     = oldName;
+      editInput.className = 'machine-edit-input';
+      tdMachine.textContent = '';
+      tdMachine.appendChild(editInput);
+      editInput.focus();
+      editInput.select();
+
+      function commitEdit() {
+        const newName = editInput.value.trim();
+        if (newName && newName !== oldName) {
+          // 環境名リストを更新してlocalStorageに保存
+          state.machines[rowIdx] = newName;
+          saveMachines(state.machines);
+          // 旧名を参照している予約を新名へ追従（リネームで既存予約バーが消えないようにする）
+          state.reservations = state.reservations.map(res =>
+            res.machine === oldName ? { ...res, machine: newName } : res
+          );
+          saveReservations(state.reservations);
+        }
+        renderCalendar();
+      }
+
+      editInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter')  { editInput.blur(); }  // Enter で確定
+        if (e.key === 'Escape') { renderCalendar(); }  // Escape でキャンセル
+      });
+      editInput.addEventListener('blur', commitEdit); // フォーカス外れで確定
+    });
 
     for (let col = 0; col < days; col++) {
       const d       = col + 1;
@@ -343,12 +413,29 @@ function renderCalendar() {
 
         if (resInfo.isStart) td.classList.add('res-edge-left');
         if (resInfo.isEnd)   td.classList.add('res-edge-right');
+        // 隣セルの同一予約判定でセグメント端クラスを付与（連続バー化・選択外枠1本化に使用）
+        const sameLeft  = resCells[machine]?.[col - 1]?.resId === resInfo.resId;
+        const sameRight = resCells[machine]?.[col + 1]?.resId === resInfo.resId;
+        if (sameRight)  td.classList.add('res-join-right'); // 右隣と連結（縦境界線を完全除去）
+        if (!sameLeft)  td.classList.add('res-seg-left');   // セグメント左端
+        if (!sameRight) td.classList.add('res-seg-right');  // セグメント右端
 
         if (resInfo.isStart) {
           const labelEl = document.createElement('span');
           labelEl.className   = 'res-label';
-          labelEl.textContent = resInfo.label;
+          // 申請者名がある場合は「申請者名）ラベル」形式で表示
+          labelEl.textContent = resInfo.applicant
+            ? `${resInfo.applicant}）${resInfo.label}`
+            : resInfo.label;
           td.appendChild(labelEl);
+        }
+
+        // 備考を予約バー右端（終了セル）の外側に表示
+        if (resInfo.isEnd && resInfo.remark) {
+          const remarkEl = document.createElement('span');
+          remarkEl.className   = 'res-remark';
+          remarkEl.textContent = resInfo.remark;
+          td.appendChild(remarkEl);
         }
 
         td.addEventListener('mousemove', e => {
@@ -525,7 +612,7 @@ function onDragResMove(e) {
   // プレビュー / ゴーストセルを算出
   const previewCells = new Set();
   const ghostCells   = new Set();
-  const newMachine   = HILS_MACHINES[newRow];
+  const newMachine   = state.machines[newRow]; // 可変環境名リストを参照
 
   for (let d = new Date(newStart); d <= newEnd; d.setDate(d.getDate() + 1)) {
     if (d.getFullYear() === year && d.getMonth() === month - 1) {
@@ -554,7 +641,7 @@ function onDragResUp() {
   if (_drag.didMove && _drag.newStart && _drag.newEnd) {
     const { resId, newStart, newEnd, newRow } = _drag;
     const res        = state.reservations[resId];
-    const newMachine = HILS_MACHINES[newRow];
+    const newMachine = state.machines[newRow]; // 可変環境名リストを参照
     if (res && !checkOverlap(resId, newMachine, newStart, newEnd)) {
       state.reservations[resId] = {
         ...res,
@@ -563,7 +650,6 @@ function onDragResUp() {
         end:     dateToIso(newEnd),
       };
       saveReservations(state.reservations);
-      updateInfoPanel();
     }
   }
 
@@ -573,6 +659,9 @@ function onDragResUp() {
   _drag.newEnd       = null;
   _drag.didMove      = false;
 
+  // クリック・ドラッグいずれの場合も常にパネルを更新する
+  // （mousedown でセット済みの selectedResId を使用するため、renderCalendar より前に呼ぶ）
+  updateInfoPanel();
   renderCalendar();
 }
 
@@ -644,15 +733,16 @@ function onResClick(resId) {
 // ────────────────────────────────────────────
 function updateInfoPanel() {
   const { selectedResId, reservations } = state;
-  const hint    = document.getElementById('info-hint');
-  const machine = document.getElementById('info-machine');
-  const period  = document.getElementById('info-period');
-  const label   = document.getElementById('info-label');
-  const editBtn = document.getElementById('edit-btn');
+  const hint      = document.getElementById('info-hint');
+  const machine   = document.getElementById('info-machine');
+  const period    = document.getElementById('info-period');
+  const label     = document.getElementById('info-label');
+  const applicant = document.getElementById('info-applicant'); // 申請者表示要素
+  const editBtn   = document.getElementById('edit-btn');
 
   if (selectedResId === null || !reservations[selectedResId]) {
     hint.classList.remove('hidden');
-    [machine, period, label, editBtn].forEach(el => el.classList.add('hidden'));
+    [machine, period, label, applicant, editBtn].forEach(el => el.classList.add('hidden'));
     return;
   }
 
@@ -673,6 +763,14 @@ function updateInfoPanel() {
   machine.textContent = `筐体:  ${res.machine}`;
   period.textContent  = `期間:  ${periodStr}  （${biz}営業日）`;
   label.textContent   = `ラベル:  ${res.label || ''}`;
+
+  // 申請者：値がある場合のみパネルに表示
+  if (res.applicant) {
+    applicant.textContent = `申請者:  ${res.applicant}`;
+    applicant.classList.remove('hidden');
+  } else {
+    applicant.classList.add('hidden');
+  }
 }
 
 // ────────────────────────────────────────────
@@ -769,7 +867,9 @@ function renderLegendPanel() {
   addBtn.className   = 'legend-add-btn';
   addBtn.textContent = '＋ 凡例追加';
   addBtn.addEventListener('click', () => {
-    _legend.push({ id: genLegendId(), name: '新しい凡例', color: LEGEND_PALETTE[0] });
+    // 改修: 未使用のパレット色を自動割当（全色使用済みの場合はパレット先頭にフォールバック）
+    const color = pickUnusedPaletteColor() || LEGEND_PALETTE[0];
+    _legend.push({ id: genLegendId(), name: '新しい凡例', color });
     saveLegend(_legend);
     renderLegendPanel();
   });
@@ -784,24 +884,53 @@ function openColorPicker(anchorEl, legendIdx) {
   const pop = document.createElement('div');
   pop.className = 'color-popover';
 
+  // 改修: 自分以外の凡例が使用中の色集合（重複判定に使用）
+  const used = getUsedLegendColors(legendIdx);
+
+  // 改修: 色確定の共通処理（パレット選択・任意色入力の両方から呼ぶ）
+  function applyLegendColor(hex) {
+    _legend[legendIdx].color = hex;
+    saveLegend(_legend);
+    closeColorPicker();
+    renderLegendPanel();
+    renderCalendar();
+  }
+
   LEGEND_PALETTE.forEach(hex => {
     const sw = document.createElement('div');
     sw.className = 'palette-swatch';
     sw.style.background = hex;
-    sw.title = hex;
-    if (_legend[legendIdx] && _legend[legendIdx].color.toLowerCase() === hex.toLowerCase()) {
-      sw.classList.add('palette-selected');
+    const isSelf = _legend[legendIdx] && _legend[legendIdx].color.toLowerCase() === hex.toLowerCase();
+    const isUsed = used.has(hex.toLowerCase());
+    if (isSelf) sw.classList.add('palette-selected');
+    if (isUsed) {
+      // 改修: 他凡例が使用中の色は選択不可（グレーアウト＋クリック無効）
+      sw.classList.add('palette-used');
+      sw.title = hex + '（使用中）';
+    } else {
+      sw.title = hex;
+      sw.addEventListener('click', e => { e.stopPropagation(); applyLegendColor(hex); });
     }
-    sw.addEventListener('click', e => {
-      e.stopPropagation();
-      _legend[legendIdx].color = hex;
-      saveLegend(_legend);
-      closeColorPicker();
-      renderLegendPanel();
-      renderCalendar();
-    });
     pop.appendChild(sw);
   });
+
+  // 改修: パレット枯渇に備えた任意色入力（ブラウザ標準カラーピッカー）
+  const custom = document.createElement('input');
+  custom.type  = 'color';
+  custom.className = 'palette-custom';
+  custom.value = (_legend[legendIdx] ? _legend[legendIdx].color : LEGEND_PALETTE[0]);
+  custom.title = '任意色を入力';
+  custom.addEventListener('click', e => e.stopPropagation());
+  custom.addEventListener('change', e => {
+    const hex = e.target.value;
+    // 改修: 他凡例と重複する色は拒否
+    if (used.has(hex.toLowerCase())) {
+      alert('その色は他の凡例で使用中です。別の色を選んでください。');
+      return;
+    }
+    applyLegendColor(hex);
+  });
+  pop.appendChild(custom);
 
   anchorEl.parentElement.appendChild(pop);
   _activePopover = pop;
@@ -839,11 +968,13 @@ function openRegisterDialog() {
   const defLeg   = _legend.length > 0 ? _legend[0].id : '';
 
   showDialog('予約登録', {
-    machine:  HILS_MACHINES[row],
-    startIso: `${year}-${String(month).padStart(2,'0')}-${String(startDay).padStart(2,'0')}`,
-    endIso:   `${year}-${String(month).padStart(2,'0')}-${String(endDay).padStart(2,'0')}`,
-    label:    '',
-    legendId: defLeg,
+    machine:   state.machines[row], // 可変環境名リストを参照
+    startIso:  `${year}-${String(month).padStart(2,'0')}-${String(startDay).padStart(2,'0')}`,
+    endIso:    `${year}-${String(month).padStart(2,'0')}-${String(endDay).padStart(2,'0')}`,
+    label:     '',
+    legendId:  defLeg,
+    applicant: '', // 申請者（新規登録時は空）
+    remark:    '', // 備考（新規登録時は空）
   }, 'register');
 }
 
@@ -851,11 +982,13 @@ function openEditDialog(resId) {
   const res = state.reservations[resId];
   if (!res) return;
   showDialog('予約を編集', {
-    machine:  res.machine,
-    startIso: res.start.split('T')[0],
-    endIso:   res.end.split('T')[0],
-    label:    res.label || '',
-    legendId: res.legendId || (_legend.length > 0 ? _legend[0].id : ''),
+    machine:   res.machine,
+    startIso:  res.start.split('T')[0],
+    endIso:    res.end.split('T')[0],
+    label:     res.label     || '',
+    legendId:  res.legendId  || (_legend.length > 0 ? _legend[0].id : ''),
+    applicant: res.applicant || '', // 既存の申請者（未設定の場合は空文字）
+    remark:    res.remark    || '', // 既存の備考（未設定の場合は空文字）
   }, 'edit', resId);
 }
 
@@ -879,7 +1012,7 @@ function showDialog(title, data, mode, resId = null) {
     <div class="form-row">
       <label>筐体:</label>
       <select id="f-machine">
-        ${HILS_MACHINES.map(m =>
+        ${state.machines.map(m =>
           `<option value="${m}"${m === data.machine ? ' selected' : ''}>${m}</option>`
         ).join('')}
       </select>
@@ -902,6 +1035,19 @@ function showDialog(title, data, mode, resId = null) {
         <div id="f-swatch" class="legend-select-swatch"></div>
         <select id="f-legend">${buildLegendSelect(data.legendId)}</select>
       </div>
+    </div>
+    <div class="form-row">
+      <label>申請者:</label>
+      <input type="text" id="f-applicant" value="${data.applicant || ''}" placeholder="氏名など">
+    </div>
+    <div class="form-row">
+      <label>備考:</label>
+      <input type="text" id="f-remark" list="remark-options"
+             value="${data.remark || ''}" placeholder="★ / ☆ / 自由記入">
+      <datalist id="remark-options">
+        <option value="★">
+        <option value="☆">
+      </datalist>
     </div>
     <div id="f-biz"  class="biz-label"></div>
     <div id="f-warn" class="warn-label hidden"></div>
@@ -951,12 +1097,14 @@ function showDialog(title, data, mode, resId = null) {
     const lm       = getLegendMap(_legend);
     const color    = lm[legendId] ? lm[legendId].color : '#fde68a';
     const resData  = {
-      machine:  document.getElementById('f-machine').value,
-      start:    document.getElementById('f-start').value,
-      end:      document.getElementById('f-end').value,
-      label:    document.getElementById('f-label').value.trim(),
+      machine:   document.getElementById('f-machine').value,
+      start:     document.getElementById('f-start').value,
+      end:       document.getElementById('f-end').value,
+      label:     document.getElementById('f-label').value.trim(),
       legendId,
       color,
+      applicant: document.getElementById('f-applicant').value.trim(), // 申請者を保存
+      remark:    document.getElementById('f-remark').value.trim(),    // 備考を保存
     };
     overlay.classList.add('hidden');
     if (mode === 'register') {
@@ -1008,6 +1156,9 @@ function mapLegacyMachine(name) {
 // 初期化
 // ────────────────────────────────────────────
 async function init() {
+  // 環境名リストをlocalStorageから読み込む（無ければデフォルト値を使用）
+  state.machines = loadMachines();
+
   const saved = loadReservations();
   if (saved !== null) {
     state.reservations = saved;
