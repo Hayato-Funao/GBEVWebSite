@@ -96,6 +96,11 @@ body {
 /* 改修: 📷保存ボタン */
 .btn-capture      { background: #7c3aed; color: #fff; }
 .btn-capture:hover { background: #6d28d9; }
+/* 改修(第6回): 延長申請・XPX受領ボタン */
+.btn-extend       { background: #0891b2; color: #fff; height: 26px; font-size: 10px; }
+.btn-extend:hover { background: #0e7490; }
+.btn-xpx          { background: #2563eb; color: #fff; height: 26px; font-size: 10px; }
+.btn-xpx:hover    { background: #1d4ed8; }
 
 .btn-cancel {
   background: #e2e8f0; color: #475569;
@@ -426,7 +431,8 @@ body {
   flex-shrink: 0;
 }
 .form-row input,
-.form-row select {
+.form-row select,
+.form-row textarea {
   flex: 1;
   height: 32px;
   border: 1.5px solid #e2e8f0;
@@ -435,6 +441,11 @@ body {
   font: 11px 'Meiryo UI', sans-serif;
   color: #1e293b;
   background: #fff;
+}
+/* 改修(第6回): 延長理由入力欄（複数行のため高さを上書き） */
+.form-row textarea {
+  height: auto;
+  resize: vertical;
 }
 .form-row input[type="color"] {
   flex: none;

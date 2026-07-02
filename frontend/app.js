@@ -21,6 +21,14 @@ const STATUS_FAULT_TEXT    = '故障';
 const EDGE_PX      = 10; // リサイズ端の判定幅（px）
 
 // ────────────────────────────────────────────
+// 改修(第6回): クエリパラメータによる権限判定（見た目のみ・認証ではない）
+//   ?user=admin → 事務局モード（削除・編集・XPX受領ボタンを表示）
+//   それ以外    → 使用者モード（延長申請ボタンを表示、ダブルクリック編集を無効化）
+// ────────────────────────────────────────────
+const _urlParams = new URLSearchParams(location.search);
+const isAdmin    = _urlParams.get('user') === 'admin';
+
+// ────────────────────────────────────────────
 // 凡例カラーパレット（xlsx色分けルールより抽出）
 // ────────────────────────────────────────────
 const LEGEND_PALETTE = [
@@ -481,7 +489,8 @@ function renderCalendar() {
     // 機種名セル（左固定列）
     const tdMachine = document.createElement('td');
     tdMachine.className = 'machine-col';
-    tdMachine.title     = `${machine}（ダブルクリックで編集）`;
+    // 改修(第6回): ユーザー編集ロックダウン - tooltip を権限別に変える
+    tdMachine.title     = isAdmin ? `${machine}（ダブルクリックで編集）` : machine;
 
     // 機種名テキストをspan要素で内包（削除ボタンと並列表示のため）
     const nameSpan = document.createElement('span');
@@ -489,122 +498,131 @@ function renderCalendar() {
     nameSpan.textContent = machine;
     tdMachine.appendChild(nameSpan);
 
-    // 改修: 削除ボタン（×）－hover時のみ表示。予約が存在する行は削除不可
-    const machineDelBtn = document.createElement('button');
-    machineDelBtn.className   = 'machine-del-btn';
-    machineDelBtn.textContent = '×';
-    machineDelBtn.title       = '削除';
-    machineDelBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      // この筐体名を参照する予約が存在する場合は削除不可（現在ルームのみ対象）
-      const hasRes = state.reservations.some(r => r.machine === machine && (r.room || 'west') === state.currentRoom);
-      if (hasRes) {
-        alert(`「${machine}」には予約が登録されているため削除できません。\n先に予約を削除してください。`);
-        return;
-      }
-      if (!confirm(`「${machine}」を削除しますか？`)) return;
-      if (rowIdx < state.machines.length) {
-        // メイン筐体リストから削除
-        state.machines.splice(rowIdx, 1);
-        saveMachines();
-      } else {
-        // 予備リストから削除
-        state.spares.splice(rowIdx - state.machines.length, 1);
-        saveSpares();
-      }
-      // 改修: 削除した筐体の担当者情報もマップから除去して保存
-      delete state.assignees[machine];
-      saveAssignees();
-      renderCalendar();
-    });
-    tdMachine.appendChild(machineDelBtn);
-
-    // 行ヘッダーダブルクリックで環境名インライン編集
-    tdMachine.addEventListener('dblclick', () => {
-      const oldName   = getAllMachines()[rowIdx]; // 改修: getAll経由でrowIdxを参照
-      const editInput = document.createElement('input');
-      editInput.type      = 'text';
-      editInput.value     = oldName;
-      editInput.className = 'machine-edit-input';
-      tdMachine.textContent = '';
-      tdMachine.appendChild(editInput);
-      editInput.focus();
-      editInput.select();
-
-      function commitEdit() {
-        const newName = editInput.value.trim();
-        if (newName && newName !== oldName) {
-          // 改修: メイン筐体か予備かに応じてリストを更新してlocalStorageに保存
-          if (rowIdx < state.machines.length) {
-            state.machines[rowIdx] = newName;
-            saveMachines();
-          } else {
-            state.spares[rowIdx - state.machines.length] = newName;
-            saveSpares();
-          }
-          // 旧名を参照している予約を新名へ追従（現在ルームのみ。リネームで既存予約バーが消えないようにする）
-          state.reservations = state.reservations.map(res =>
-            (res.machine === oldName && (res.room || 'west') === state.currentRoom)
-              ? { ...res, machine: newName }
-              : res
-          );
-          saveReservations(state.reservations);
-          // 改修: 担当者マップのキーを旧筐体名から新筐体名へ移行
-          if (Object.prototype.hasOwnProperty.call(state.assignees, oldName)) {
-            state.assignees[newName] = state.assignees[oldName];
-            delete state.assignees[oldName];
-            saveAssignees();
-          }
+    // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ筐体削除ボタンを生成・追加
+    if (isAdmin) {
+      // 改修: 削除ボタン（×）－hover時のみ表示。予約が存在する行は削除不可
+      const machineDelBtn = document.createElement('button');
+      machineDelBtn.className   = 'machine-del-btn';
+      machineDelBtn.textContent = '×';
+      machineDelBtn.title       = '削除';
+      machineDelBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        // この筐体名を参照する予約が存在する場合は削除不可（現在ルームのみ対象）
+        const hasRes = state.reservations.some(r => r.machine === machine && (r.room || 'west') === state.currentRoom);
+        if (hasRes) {
+          alert(`「${machine}」には予約が登録されているため削除できません。\n先に予約を削除してください。`);
+          return;
         }
+        if (!confirm(`「${machine}」を削除しますか？`)) return;
+        if (rowIdx < state.machines.length) {
+          // メイン筐体リストから削除
+          state.machines.splice(rowIdx, 1);
+          saveMachines();
+        } else {
+          // 予備リストから削除
+          state.spares.splice(rowIdx - state.machines.length, 1);
+          saveSpares();
+        }
+        // 改修: 削除した筐体の担当者情報もマップから除去して保存
+        delete state.assignees[machine];
+        saveAssignees();
         renderCalendar();
-      }
-
-      editInput.addEventListener('keydown', e => {
-        if (e.key === 'Enter')  { editInput.blur(); }  // Enter で確定
-        if (e.key === 'Escape') { renderCalendar(); }  // Escape でキャンセル
       });
-      editInput.addEventListener('blur', commitEdit); // フォーカス外れで確定
-    });
+      tdMachine.appendChild(machineDelBtn);
+    }
+
+    // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ筐体名インライン編集を有効化
+    if (isAdmin) {
+      tdMachine.addEventListener('dblclick', () => {
+        const oldName   = getAllMachines()[rowIdx]; // 改修: getAll経由でrowIdxを参照
+        const editInput = document.createElement('input');
+        editInput.type      = 'text';
+        editInput.value     = oldName;
+        editInput.className = 'machine-edit-input';
+        tdMachine.textContent = '';
+        tdMachine.appendChild(editInput);
+        editInput.focus();
+        editInput.select();
+
+        function commitEdit() {
+          const newName = editInput.value.trim();
+          if (newName && newName !== oldName) {
+            // 改修: メイン筐体か予備かに応じてリストを更新してlocalStorageに保存
+            if (rowIdx < state.machines.length) {
+              state.machines[rowIdx] = newName;
+              saveMachines();
+            } else {
+              state.spares[rowIdx - state.machines.length] = newName;
+              saveSpares();
+            }
+            // 旧名を参照している予約を新名へ追従（現在ルームのみ。リネームで既存予約バーが消えないようにする）
+            state.reservations = state.reservations.map(res =>
+              (res.machine === oldName && (res.room || 'west') === state.currentRoom)
+                ? { ...res, machine: newName }
+                : res
+            );
+            saveReservations(state.reservations);
+            // 改修: 担当者マップのキーを旧筐体名から新筐体名へ移行
+            if (Object.prototype.hasOwnProperty.call(state.assignees, oldName)) {
+              state.assignees[newName] = state.assignees[oldName];
+              delete state.assignees[oldName];
+              saveAssignees();
+            }
+          }
+          renderCalendar();
+        }
+
+        editInput.addEventListener('keydown', e => {
+          if (e.key === 'Enter')  { editInput.blur(); }  // Enter で確定
+          if (e.key === 'Escape') { renderCalendar(); }  // Escape でキャンセル
+        });
+        editInput.addEventListener('blur', commitEdit); // フォーカス外れで確定
+      });
+    }
 
     tr.appendChild(tdMachine);
 
     // 改修: 担当者セルを筐体列の右隣に挿入（筐体ごとの担当者を表示・インライン編集）
     const tdAssignee = document.createElement('td');
     tdAssignee.className = 'assignee-col';
-    tdAssignee.title     = '担当者（ダブルクリックで編集）';
+    // 改修(第6回): ユーザー編集ロックダウン - tooltip を権限別に変える
+    tdAssignee.title     = isAdmin ? '担当者（ダブルクリックで編集）' : '担当者';
     tdAssignee.textContent = state.assignees[machine] || '';
 
-    tdAssignee.addEventListener('dblclick', () => {
-      const currentVal    = state.assignees[machine] || '';
-      const assigneeInput = document.createElement('input');
-      assigneeInput.type      = 'text';
-      assigneeInput.value     = currentVal;
-      assigneeInput.className = 'assignee-edit-input';
-      tdAssignee.textContent  = '';
-      tdAssignee.appendChild(assigneeInput);
-      assigneeInput.focus();
-      assigneeInput.select();
+    // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ担当者インライン編集を有効化
+    if (isAdmin) {
+      tdAssignee.addEventListener('dblclick', () => {
+        const currentVal    = state.assignees[machine] || '';
+        const assigneeInput = document.createElement('input');
+        assigneeInput.type      = 'text';
+        assigneeInput.value     = currentVal;
+        assigneeInput.className = 'assignee-edit-input';
+        tdAssignee.textContent  = '';
+        tdAssignee.appendChild(assigneeInput);
+        assigneeInput.focus();
+        assigneeInput.select();
 
-      function commitAssignee() {
-        const newVal = assigneeInput.value.trim();
-        // 改修: 値が変わった場合のみ担当者マップを更新してlocalStorageに保存
-        if (newVal !== currentVal) {
-          if (newVal) {
-            state.assignees[machine] = newVal;
-          } else {
-            delete state.assignees[machine];
+        function commitAssignee() {
+          const newVal = assigneeInput.value.trim();
+          // 改修: 値が変わった場合のみ担当者マップを更新してlocalStorageに保存
+          if (newVal !== currentVal) {
+            if (newVal) {
+              state.assignees[machine] = newVal;
+            } else {
+              delete state.assignees[machine];
+            }
+            saveAssignees();
           }
-          saveAssignees();
+          renderCalendar();
         }
-        renderCalendar();
-      }
 
-      assigneeInput.addEventListener('keydown', e => {
-        if (e.key === 'Enter')  { assigneeInput.blur(); }  // Enter で確定
-        if (e.key === 'Escape') { renderCalendar(); }       // Escape でキャンセル
+        assigneeInput.addEventListener('keydown', e => {
+          if (e.key === 'Enter')  { assigneeInput.blur(); }  // Enter で確定
+          if (e.key === 'Escape') { renderCalendar(); }       // Escape でキャンセル
+        });
+        assigneeInput.addEventListener('blur', commitAssignee); // フォーカス外れで確定
       });
-      assigneeInput.addEventListener('blur', commitAssignee); // フォーカス外れで確定
-    });
+    }
 
     tr.appendChild(tdAssignee);
 
@@ -696,14 +714,17 @@ function renderCalendar() {
           td.appendChild(remarkEl);
         }
 
-        td.addEventListener('mousemove', e => {
-          if (_drag.active) return;
-          const rect = td.getBoundingClientRect();
-          const xIn  = e.clientX - rect.left;
-          const isL  = resInfo.isStart && xIn < EDGE_PX;
-          const isR  = resInfo.isEnd   && xIn > rect.width - EDGE_PX;
-          td.style.cursor = (isL || isR) ? 'ew-resize' : 'grab';
-        });
+        // 改修(第6回): ユーザー編集ロックダウン - 事務局のみリサイズ/移動カーソルを表示
+        if (isAdmin) {
+          td.addEventListener('mousemove', e => {
+            if (_drag.active) return;
+            const rect = td.getBoundingClientRect();
+            const xIn  = e.clientX - rect.left;
+            const isL  = resInfo.isStart && xIn < EDGE_PX;
+            const isR  = resInfo.isEnd   && xIn > rect.width - EDGE_PX;
+            td.style.cursor = (isL || isR) ? 'ew-resize' : 'grab';
+          });
+        }
         td.addEventListener('mousedown', onResMouseDown);
         td.addEventListener('click', () => {
           // 修正: ドラッグ移動後はクリック選択しない（onDragResUpで再描画済み）
@@ -711,11 +732,15 @@ function renderCalendar() {
           // 修正: in-place更新で赤枠を即時表示（renderCalendarでのノード再構築を回避しdblclickを維持）
           onResClick(resInfo.resId);
         });
-        td.addEventListener('dblclick', () => {
-          // 修正: ノードを再構築しないためdblclickが確実に発火する
-          openEditDialog(resInfo.resId);
-        });
-      } else if (!isWkd) {
+        // 改修(第6回): 事務局モードのみダブルクリック編集を有効化
+        if (isAdmin) {
+          td.addEventListener('dblclick', () => {
+            // 修正: ノードを再構築しないためdblclickが確実に発火する
+            openEditDialog(resInfo.resId);
+          });
+        }
+      } else if (!isWkd && isAdmin) {
+        // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ空セル範囲選択（新規登録用）を有効化
         td.addEventListener('mousedown', onCellMouseDown);
         td.addEventListener('mouseover', onCellMouseOver);
       }
@@ -736,8 +761,9 @@ function renderCalendar() {
     tbody.appendChild(buildMachineRow(machine, localIdx));
   });
 
+  // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ筐体追加行を生成
   // 改修: 筐体追加行（筐体T の下に「＋」ボタン行を挿入）
-  {
+  if (isAdmin) {
     const addTr = document.createElement('tr');
     addTr.className = 'machine-add-row';
 
@@ -829,6 +855,8 @@ const _drag = {
 };
 
 function onResMouseDown(e) {
+  // 改修(第6回): ユーザー編集ロックダウン - 使用者モードはドラッグ移動/リサイズ不可
+  if (!isAdmin) return;
   if (e.button !== 0) return;
   // 修正: 新しい操作開始時にドラッグ移動フラグをリセット
   _resMoved = false;
@@ -1116,14 +1144,17 @@ function updateInfoPanel() {
   const machine   = document.getElementById('info-machine');
   const period    = document.getElementById('info-period');
   const label     = document.getElementById('info-label');
-  const applicant = document.getElementById('info-applicant'); // 申請者表示要素
+  const applicant  = document.getElementById('info-applicant'); // 申請者表示要素
   // 改修(第2回): 編集ボタン撤去に伴い editBtn の参照・表示制御を削除
   // 改修: 削除ボタン（情報パネルへ移設）
-  const delBtn    = document.getElementById('info-delete-btn');
+  const delBtn     = document.getElementById('info-delete-btn');
+  // 改修(第6回): 延長申請・XPX受領ボタン
+  const extendBtn  = document.getElementById('info-extend-btn');
+  const xpxBtn     = document.getElementById('info-xpx-btn');
 
   if (selectedResId === null || !reservations[selectedResId]) {
     hint.classList.remove('hidden');
-    [machine, period, label, applicant, delBtn].forEach(el => el.classList.add('hidden'));
+    [machine, period, label, applicant, delBtn, extendBtn, xpxBtn].forEach(el => el.classList.add('hidden'));
     return;
   }
 
@@ -1140,8 +1171,26 @@ function updateInfoPanel() {
   }
 
   hint.classList.add('hidden');
-  // 改修: 削除ボタンを予約選択時に表示（編集ボタンは第2回改修で撤去済み）
-  [machine, period, label, delBtn].forEach(el => el.classList.remove('hidden'));
+  // 改修(第6回): 削除ボタンは事務局モードのみ表示
+  [machine, period, label].forEach(el => el.classList.remove('hidden'));
+  if (isAdmin) {
+    delBtn.classList.remove('hidden');
+  } else {
+    delBtn.classList.add('hidden');
+  }
+  // 改修(第6回): 延長申請ボタンは使用者モードのみ表示（暫定: 全予約に表示）
+  if (!isAdmin) {
+    extendBtn.classList.remove('hidden');
+  } else {
+    extendBtn.classList.add('hidden');
+  }
+  // 改修(第6回): XPX受領ボタンは事務局モードかつXPX(FI/EDR)予約のときのみ表示
+  const resLegForXpx = _legend.find(l => l.id === res.legendId);
+  if (isAdmin && resLegForXpx && isXpxLinkLegend(resLegForXpx.name)) {
+    xpxBtn.classList.remove('hidden');
+  } else {
+    xpxBtn.classList.add('hidden');
+  }
   machine.textContent = `筐体:  ${res.machine}`;
   period.textContent  = `期間:  ${periodStr}  （${biz}営業日）`;
   // 改修: 状態が通常以外の場合は状態名を優先表示
@@ -1265,49 +1314,65 @@ function renderLegendPanel() {
     const swatch = document.createElement('div');
     swatch.className = 'legend-swatch';
     swatch.style.background = leg.color;
-    swatch.title = '色を変更';
-    swatch.addEventListener('click', e => {
-      e.stopPropagation();
-      openColorPicker(swatch, idx);
-    });
-
-    const nameInput = document.createElement('input');
-    nameInput.type      = 'text';
-    nameInput.className = 'legend-name-input';
-    nameInput.value     = leg.name;
-    nameInput.addEventListener('change', () => {
-      _legend[idx].name = nameInput.value.trim() || _legend[idx].name;
-      saveLegend(_legend);
-    });
-
-    const delBtn = document.createElement('button');
-    delBtn.className   = 'legend-del-btn';
-    delBtn.textContent = '×';
-    delBtn.title       = '削除';
-    delBtn.addEventListener('click', () => {
-      _legend.splice(idx, 1);
-      saveLegend(_legend);
-      renderLegendPanel();
-      renderCalendar();
-    });
-
+    // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ色変更を有効化
+    if (isAdmin) {
+      swatch.title = '色を変更';
+      swatch.addEventListener('click', e => {
+        e.stopPropagation();
+        openColorPicker(swatch, idx);
+      });
+    }
     row.appendChild(swatch);
-    row.appendChild(nameInput);
-    row.appendChild(delBtn);
+
+    if (isAdmin) {
+      // 事務局: 名称は編集可能なinput
+      const nameInput = document.createElement('input');
+      nameInput.type      = 'text';
+      nameInput.className = 'legend-name-input';
+      nameInput.value     = leg.name;
+      nameInput.addEventListener('change', () => {
+        _legend[idx].name = nameInput.value.trim() || _legend[idx].name;
+        saveLegend(_legend);
+      });
+      row.appendChild(nameInput);
+
+      // 削除ボタン（×）
+      const delBtn = document.createElement('button');
+      delBtn.className   = 'legend-del-btn';
+      delBtn.textContent = '×';
+      delBtn.title       = '削除';
+      delBtn.addEventListener('click', () => {
+        _legend.splice(idx, 1);
+        saveLegend(_legend);
+        renderLegendPanel();
+        renderCalendar();
+      });
+      row.appendChild(delBtn);
+    } else {
+      // 改修(第6回): ユーザー編集ロックダウン - 使用者は名称を読み取り専用のspanで表示
+      const nameSpan = document.createElement('span');
+      nameSpan.className   = 'legend-name-input'; // 既存スタイルを再利用
+      nameSpan.textContent = leg.name;
+      row.appendChild(nameSpan);
+    }
+
     panel.appendChild(row);
   });
 
-  const addBtn = document.createElement('button');
-  addBtn.className   = 'legend-add-btn';
-  addBtn.textContent = '＋ 凡例追加';
-  addBtn.addEventListener('click', () => {
-    // 改修: 未使用のパレット色を自動割当（全色使用済みの場合はパレット先頭にフォールバック）
-    const color = pickUnusedPaletteColor() || LEGEND_PALETTE[0];
-    _legend.push({ id: genLegendId(), name: '新しい凡例', color });
-    saveLegend(_legend);
-    renderLegendPanel();
-  });
-  panel.appendChild(addBtn);
+  // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ凡例追加ボタンを表示
+  if (isAdmin) {
+    const addBtn = document.createElement('button');
+    addBtn.className   = 'legend-add-btn';
+    addBtn.textContent = '＋ 凡例追加';
+    addBtn.addEventListener('click', () => {
+      // 改修: 未使用のパレット色を自動割当（全色使用済みの場合はパレット先頭にフォールバック）
+      const color = pickUnusedPaletteColor() || LEGEND_PALETTE[0];
+      _legend.push({ id: genLegendId(), name: '新しい凡例', color });
+      saveLegend(_legend);
+      renderLegendPanel();
+    });
+    panel.appendChild(addBtn);
+  }
 }
 
 // カラーパレットポップオーバー
@@ -1388,6 +1453,35 @@ document.getElementById('info-delete-btn').addEventListener('click', () => {
   if (state.selectedResId !== null) deleteReservation(state.selectedResId);
 });
 
+// 改修(第6回): 延長申請ボタン → 延長ダイアログを表示（ガワのみ）
+document.getElementById('info-extend-btn').addEventListener('click', () => {
+  const overlay = document.getElementById('extend-overlay');
+  // 選択中予約の終了日を延長後終了日の初期値として設定
+  const res = state.reservations[state.selectedResId];
+  if (res) document.getElementById('ext-end').value = res.end.split('T')[0];
+  document.getElementById('ext-reason').value = '';
+  overlay.classList.remove('hidden');
+});
+
+// 改修(第6回): 延長申請ダイアログの申請・キャンセル処理（ガワのみ・実処理未実装）
+document.getElementById('ext-ok').addEventListener('click', () => {
+  // 延長理由は必須入力
+  if (!document.getElementById('ext-reason').value.trim()) {
+    alert('延長理由を入力してください');
+    return;
+  }
+  alert('申請処理は未実装です');
+  document.getElementById('extend-overlay').classList.add('hidden');
+});
+document.getElementById('ext-cancel').addEventListener('click', () => {
+  document.getElementById('extend-overlay').classList.add('hidden');
+});
+
+// 改修(第6回): XPX受領ボタン（ガワのみ・実処理未実装）
+document.getElementById('info-xpx-btn').addEventListener('click', () => {
+  alert('XPX リスト登録処理は未実装です');
+});
+
 // 改修: 削除処理を共通関数として切り出し（編集ダイアログ内から情報パネルへ移設に伴い整理）
 function deleteReservation(resId) {
   if (!confirm('この予約を削除しますか？')) return;
@@ -1398,6 +1492,8 @@ function deleteReservation(resId) {
 }
 
 function openRegisterDialog() {
+  // 改修(第6回): ユーザー編集ロックダウン - 使用者モードは登録不可（二重防衛）
+  if (!isAdmin) return;
   const sel = state.selectedCells;
   if (!sel.size) {
     alert('筐体と期間をカレンダー上で選択してから「＋ 登録」を押してください');
@@ -1707,6 +1803,11 @@ function mapLegacyMachine(name) {
 // 初期化
 // ────────────────────────────────────────────
 async function init() {
+  // 改修(第6回): クエリパラメータに応じたユーザー名をヘッダに表示
+  document.getElementById('user-name').textContent = isAdmin ? '事務局' : 'ユーザー';
+  // 改修(第6回): ユーザー編集ロックダウン - 使用者モードは「＋登録」ボタンを非表示
+  if (!isAdmin) document.getElementById('register-btn').classList.add('hidden');
+
   // 改修(第4回): ルーム別マップをlocalStorageから読み込み、ビューをバインドする
   state.machinesByRoom  = loadMachines();
   state.sparesByRoom    = loadSpares();

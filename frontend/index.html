@@ -63,6 +63,10 @@
         <!-- 改修(第2回): 編集ボタンを撤去（ダブルクリックによる編集ダイアログ起動に一本化） -->
         <!-- 改修: 削除ボタンを編集ダイアログ内から情報パネルの編集ボタン隣へ移設 -->
         <button id="info-delete-btn" class="btn btn-delete hidden">削除</button>
+        <!-- 改修(第6回): 使用延長申請ボタン（使用者モード・予約選択時に表示。ガワのみ） -->
+        <button id="info-extend-btn" class="btn btn-extend hidden">延長申請</button>
+        <!-- 改修(第6回): XPX受領ボタン（事務局モード・XPX(FI/EDR)予約選択時に表示。ガワのみ） -->
+        <button id="info-xpx-btn" class="btn btn-xpx hidden">XPX受領</button>
       </div>
     </div>
 
@@ -91,6 +95,29 @@
       <!-- キャンセル・保存ボタン -->
       <button id="dialog-cancel" class="btn btn-cancel">キャンセル</button>
       <button id="dialog-ok"     class="btn btn-ok">登録</button>
+    </div>
+  </div>
+</div>
+
+<!-- 改修(第6回): 使用延長申請ダイアログ（ガワのみ・実処理未実装） -->
+<div id="extend-overlay" class="dialog-overlay hidden">
+  <div class="dialog-box">
+    <div class="dialog-header">
+      <span>使用延長申請</span>
+    </div>
+    <div class="dialog-body">
+      <div class="form-row">
+        <label>延長後終了日:</label>
+        <input type="date" id="ext-end">
+      </div>
+      <div class="form-row">
+        <label>延長理由:</label>
+        <textarea id="ext-reason" rows="3" placeholder="必須入力"></textarea>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <button id="ext-cancel" class="btn btn-cancel">キャンセル</button>
+      <button id="ext-ok" class="btn btn-ok">申請</button>
     </div>
   </div>
 </div>
