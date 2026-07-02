@@ -544,9 +544,15 @@ function renderCalendar() {
         });
         td.addEventListener('mousedown', onResMouseDown);
         td.addEventListener('click', () => {
-          if (!_drag.didMove) onResClick(resInfo.resId);
+          // 修正: ドラッグ移動後はクリック選択しない（onDragResUpで再描画済み）
+          if (_resMoved) return;
+          // 修正: in-place更新で赤枠を即時表示（renderCalendarでのノード再構築を回避しdblclickを維持）
+          onResClick(resInfo.resId);
         });
-        td.addEventListener('dblclick', () => openEditDialog(resInfo.resId));
+        td.addEventListener('dblclick', () => {
+          // 修正: ノードを再構築しないためdblclickが確実に発火する
+          openEditDialog(resInfo.resId);
+        });
       } else if (!isWkd) {
         td.addEventListener('mousedown', onCellMouseDown);
         td.addEventListener('mouseover', onCellMouseOver);
@@ -635,6 +641,8 @@ function renderCalendar() {
 // ────────────────────────────────────────────
 // 予約ドラッグ（移動 / リサイズ）
 // ────────────────────────────────────────────
+// 修正: 直前操作がドラッグ移動だったか（didMoveはmouseupで解消されるため別途保持）
+let _resMoved = false;
 const _drag = {
   active:       false,
   mode:         null,   // 'move' | 'rs' | 're'
@@ -654,6 +662,8 @@ const _drag = {
 
 function onResMouseDown(e) {
   if (e.button !== 0) return;
+  // 修正: 新しい操作開始時にドラッグ移動フラグをリセット
+  _resMoved = false;
   e.preventDefault();
   e.stopPropagation();
 
@@ -802,7 +812,11 @@ function onDragResUp() {
   _drag.active = false;
   document.body.style.cursor = '';
 
-  if (_drag.didMove && _drag.newStart && _drag.newEnd) {
+  // 修正: didMove を退避してフラグを保持（didMoveはこの後リセットされるため）
+  const moved = _drag.didMove;
+  _resMoved   = moved;
+
+  if (moved && _drag.newStart && _drag.newEnd) {
     const { resId, newStart, newEnd, newRow } = _drag;
     const res        = state.reservations[resId];
     const newMachine = getAllMachines()[newRow]; // 改修: メイン筐体＋予備の全環境名を参照
@@ -823,10 +837,12 @@ function onDragResUp() {
   _drag.newEnd       = null;
   _drag.didMove      = false;
 
-  // クリック・ドラッグいずれの場合も常にパネルを更新する
-  // （mousedown でセット済みの selectedResId を使用するため、renderCalendar より前に呼ぶ）
-  updateInfoPanel();
-  renderCalendar();
+  // 修正: ドラッグ移動/リサイズ時のみ再描画する。単純クリック時はノードを差し替えず
+  //       dblclickが同一ノード上で確実に発火できるよう、赤枠選択はin-placeで描画する
+  if (moved) {
+    updateInfoPanel();
+    renderCalendar();
+  }
 }
 
 function checkOverlap(excludeResId, machine, ns, ne) {
@@ -908,7 +924,19 @@ function onResClick(resId) {
   state.selectedCells = new Set();
   state.anchorCell    = null;
   updateInfoPanel();
-  renderCalendar();
+  // 修正: renderCalendarによるノード再構築を廃しin-placeで赤枠を即時付与（dblclick維持）
+  applyResSelectionHighlight(resId);
+}
+
+// 修正: 既存ノードのクラスを付け替えて赤枠選択を即時反映する（renderCalendarを呼ばない）
+function applyResSelectionHighlight(resId) {
+  const table = document.getElementById('gantt-table');
+  if (!table) return;
+  // 緑枠（空きセル選択）・赤枠（予約選択）をすべて解除してから新たに付与
+  table.querySelectorAll('.gantt-cell.selected, .gantt-cell.res-selected')
+       .forEach(td => td.classList.remove('selected', 'res-selected'));
+  table.querySelectorAll(`.gantt-cell[data-res-id="${resId}"]`)
+       .forEach(td => td.classList.add('res-selected'));
 }
 
 // ────────────────────────────────────────────
@@ -921,13 +949,13 @@ function updateInfoPanel() {
   const period    = document.getElementById('info-period');
   const label     = document.getElementById('info-label');
   const applicant = document.getElementById('info-applicant'); // 申請者表示要素
-  const editBtn   = document.getElementById('edit-btn');
+  // 改修(第2回): 編集ボタン撤去に伴い editBtn の参照・表示制御を削除
   // 改修: 削除ボタン（情報パネルへ移設）
   const delBtn    = document.getElementById('info-delete-btn');
 
   if (selectedResId === null || !reservations[selectedResId]) {
     hint.classList.remove('hidden');
-    [machine, period, label, applicant, editBtn, delBtn].forEach(el => el.classList.add('hidden'));
+    [machine, period, label, applicant, delBtn].forEach(el => el.classList.add('hidden'));
     return;
   }
 
@@ -944,8 +972,8 @@ function updateInfoPanel() {
   }
 
   hint.classList.add('hidden');
-  // 改修: 編集ボタンと削除ボタンを同じタイミングで表示
-  [machine, period, label, editBtn, delBtn].forEach(el => el.classList.remove('hidden'));
+  // 改修: 削除ボタンを予約選択時に表示（編集ボタンは第2回改修で撤去済み）
+  [machine, period, label, delBtn].forEach(el => el.classList.remove('hidden'));
   machine.textContent = `筐体:  ${res.machine}`;
   period.textContent  = `期間:  ${periodStr}  （${biz}営業日）`;
   // 改修: 状態が通常以外の場合は状態名を優先表示
@@ -1152,11 +1180,9 @@ function closeColorPicker() {
 // 登録・編集ダイアログ
 // ────────────────────────────────────────────
 document.getElementById('register-btn').addEventListener('click', openRegisterDialog);
-document.getElementById('edit-btn').addEventListener('click', () => {
-  if (state.selectedResId !== null) openEditDialog(state.selectedResId);
-});
+// 改修(第2回): 編集ボタン撤去に伴いクリックリスナー削除（編集はダブルクリックのみ）
 
-// 改修: 削除ボタンを情報パネルへ移設 ─ 編集ボタン隣のクリックで選択中予約を削除
+// 改修: 削除ボタンを情報パネルへ移設 ─ 削除ボタンクリックで選択中予約を削除
 document.getElementById('info-delete-btn').addEventListener('click', () => {
   if (state.selectedResId !== null) deleteReservation(state.selectedResId);
 });
@@ -1255,10 +1281,7 @@ function showDialog(title, data, mode, resId = null) {
       <label>終了日:</label>
       <input type="date" id="f-end" value="${data.endIso}">
     </div>
-    <div id="form-row-label" class="form-row">
-      <label>ラベル:</label>
-      <input type="text" id="f-label" value="${data.label}" placeholder="プロジェクト名など">
-    </div>
+    <!-- 改修(第2回): 分類を上・ラベルを下に入れ替え -->
     <div id="form-row-legend" class="form-row">
       <label>分類:</label>
       <div class="legend-select-wrap">
@@ -1266,17 +1289,21 @@ function showDialog(title, data, mode, resId = null) {
         <select id="f-legend">${buildLegendSelect(data.legendId)}</select>
       </div>
     </div>
+    <div id="form-row-label" class="form-row">
+      <label>ラベル:</label>
+      <input type="text" id="f-label" value="${data.label}" placeholder="プロジェクト名など">
+    </div>
     <div id="form-row-applicant" class="form-row">
       <label>申請者:</label>
       <input type="text" id="f-applicant" value="${data.applicant || ''}" placeholder="氏名など">
     </div>
     <div id="form-row-remark" class="form-row">
       <label>備考:</label>
+      <!-- 改修(第2回): ☆を datalist候補・placeholder から削除（★のみ残す） -->
       <input type="text" id="f-remark" list="remark-options"
-             value="${data.remark || ''}" placeholder="★ / ☆ / 自由記入">
+             value="${data.remark || ''}" placeholder="★ / 自由記入">
       <datalist id="remark-options">
         <option value="★">
-        <option value="☆">
       </datalist>
     </div>
     <div id="f-biz"  class="biz-label"></div>
