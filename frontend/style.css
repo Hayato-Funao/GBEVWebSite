@@ -434,6 +434,13 @@ body {
 
 .biz-label  { font: bold 12px 'Meiryo UI', sans-serif; color: #4f46e5; margin-top: 6px; }
 .warn-label { font-size: 10px; color: #dc2626; margin-top: 4px; }
+/* 改修(第5回): 自動生成ラベル欄（読み取り専用の見た目） */
+#f-label[readonly] { background: #f1f5f9; color: #475569; }
+/* 改修(第5回): ガントバーのXPXラベルリンク（バー文字色を継承し下線のみ付与） */
+/* 不具合修正: 親 .res-label が pointer-events:none のため auto に戻してクリック可能にする */
+.res-label-link { pointer-events: auto; text-decoration: underline; cursor: pointer; color: inherit; }
+/* 改修(第5回): 情報パネルのXPXラベルリンク */
+.info-label-link { color: #4f46e5; text-decoration: underline; }
 
 /* ── ユーティリティ ── */
 .hidden { display: none !important; }

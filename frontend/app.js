@@ -373,8 +373,9 @@ function buildResCellMap(year, month, reservations) {
       map[res.machine][col] = {
         resId,
         color,
-        status:    resStatus, // 改修: 状態（normal/spare/fault）をセルマップに転記
+        status:    resStatus,       // 改修: 状態（normal/spare/fault）をセルマップに転記
         label:     res.label || '',
+        legendId:  res.legendId || '', // 改修(第5回): 凡例IDをセルマップに転記（ラベルリンク化の判定に使用）
         applicant: res.applicant || '', // 申請者名をセルマップに転記（バー上ラベル表示に使用）
         isStart:   false,
         isEnd:     false,
@@ -636,18 +637,37 @@ function renderCalendar() {
 
         // 改修(第4回): 休日はラベルなし（バー表示のみ）
         if (resInfo.isStart && resInfo.status !== 'holiday') {
+          // ラベルテキストを決定（予備日・故障は専用テキスト優先、通常は「申請者名）ラベル」形式）
+          let text;
+          if (resInfo.status === 'spare')      text = STATUS_SPARE_TEXT;
+          else if (resInfo.status === 'fault') text = STATUS_FAULT_TEXT;
+          else text = resInfo.applicant ? `${resInfo.applicant}）${resInfo.label}` : resInfo.label;
+
+          // 外側コンテナは従来通り span.res-label（幅9999px・pointer-events:none）
           const labelEl = document.createElement('span');
           labelEl.className = 'res-label';
-          // 改修: 状態に応じてラベルを切り替え（予備日・故障は専用テキスト優先）
-          if (resInfo.status === 'spare') {
-            labelEl.textContent = STATUS_SPARE_TEXT;
-          } else if (resInfo.status === 'fault') {
-            labelEl.textContent = STATUS_FAULT_TEXT;
+
+          // 改修(第5回): XPX（FI/EDR）通常予約はテキストのみを内側<a>でラップしてリンク化
+          const legName   = (_legend.find(l => l.id === resInfo.legendId) || {}).name || '';
+          const isXpxLink = resInfo.status === 'normal' && isXpxLinkLegend(legName);
+          if (isXpxLink) {
+            // 不具合修正: 親.res-labelがpointer-events:noneのため<a>自体をコンテナにすると
+            // クリックイベントが届かない。内側<a>（pointer-events:auto）でテキストのみラップする
+            const a = document.createElement('a');
+            a.className = 'res-label-link';
+            a.href = XPX_LINK_URL; a.target = '_blank'; a.rel = 'noopener';
+            a.title = 'Ctrl＋クリックでPowerAppsを開く';
+            a.textContent = text;
+            a.addEventListener('mousedown', ev => {
+              if (ev.ctrlKey || ev.metaKey) ev.stopPropagation(); // Ctrl＋クリック：td選択/ドラッグを開始させない
+            });
+            a.addEventListener('click', ev => {
+              if (ev.ctrlKey || ev.metaKey) ev.stopPropagation(); // Ctrl＋クリック：リンクを開く（td選択を抑制）
+              else ev.preventDefault();                            // 通常クリック：遷移させず選択のみ
+            });
+            labelEl.appendChild(a);
           } else {
-            // 申請者名がある場合は「申請者名）ラベル」形式で表示
-            labelEl.textContent = resInfo.applicant
-              ? `${resInfo.applicant}）${resInfo.label}`
-              : resInfo.label;
+            labelEl.textContent = text;
           }
           td.appendChild(labelEl);
         }
@@ -1114,7 +1134,20 @@ function updateInfoPanel() {
                     : res.status === 'fault'   ? STATUS_FAULT_TEXT
                     : res.status === 'holiday' ? '休日'
                     : (res.label || '');
-  label.textContent = `ラベル:  ${statusLabel}`;
+  // 改修(第5回): XPX（FI/EDR）通常予約はラベルをハイパーリンク化（通常クリックで別タブ）
+  const resLeg = _legend.find(l => l.id === res.legendId);
+  if (resLeg && isXpxLinkLegend(resLeg.name) && res.status === 'normal' && res.label) {
+    label.textContent = 'ラベル:  ';
+    const infoA = document.createElement('a');
+    infoA.className = 'info-label-link';
+    infoA.href      = XPX_LINK_URL;
+    infoA.target    = '_blank';
+    infoA.rel       = 'noopener';
+    infoA.textContent = res.label;
+    label.appendChild(infoA);
+  } else {
+    label.textContent = `ラベル:  ${statusLabel}`;
+  }
 
   // 申請者：値がある場合のみパネルに表示
   if (res.applicant) {
@@ -1123,6 +1156,7 @@ function updateInfoPanel() {
   } else {
     applicant.classList.add('hidden');
   }
+
 }
 
 // ────────────────────────────────────────────
@@ -1385,6 +1419,34 @@ function openEditDialog(resId) {
   }, 'edit', resId);
 }
 
+// 改修(第5回): 分類別の分割入力欄定義（値を "_" 結合してラベル自動生成）
+const LABEL_FIELD_SETS = [
+  { match: n => n.includes('FI/EDR'), prefix: '', parts: [
+    { key: 'no',   label: '予約管理No', placeholder: '例）001',       required: true  },
+    { key: 'name', label: '機種呼称',   placeholder: '例）ABCモデル',  required: true  },
+    { key: 'eng',  label: 'ENGカテ',    placeholder: '任意',          required: false },
+  ]},
+  { match: n => n.includes('構築'), prefix: '', parts: [
+    { key: 'name', label: '機種呼称', placeholder: '例）ABCモデル', required: true },
+    { key: 'cat',  label: 'カテゴリ', placeholder: '例）カテゴリ',  required: true },
+    { key: 'eng',  label: 'ENGカテ',  placeholder: '例）ENGカテ',   required: true },
+  ]},
+  { match: n => n.includes('一般募集'), prefix: '', parts: [
+    { key: 'no',   label: '予約管理No', placeholder: '例）001',       required: true },
+    { key: 'code', label: '機種コード', placeholder: '例）ABCコード', required: true },
+  ]},
+];
+// 空欄（任意）は除外して "_" 結合、prefix は先頭に直接連結
+function getLabelFieldSet(name) { return LABEL_FIELD_SETS.find(s => s.match(name)) || null; }
+function composeLabel(fieldSet, values) {
+  const joined = fieldSet.parts.map(p => (values[p.key] || '').trim()).filter(v => v !== '').join('_');
+  return joined === '' ? '' : (fieldSet.prefix || '') + joined;
+}
+// 改修(第5回): XPXラベルのリンク先（暫定。将来はリストIDからPowerApps URLを生成）
+const XPX_LINK_URL = 'https://globalhonda.sharepoint.com/sites/jphgt110776/Lists/List/AllItems.aspx';
+// 改修(第5回): XPXリンク表示対象判定（XPX（FI/EDR）のみ、XPX構築は対象外）
+function isXpxLinkLegend(name) { return name.includes('FI/EDR'); }
+
 function buildLegendSelect(selectedId) {
   return _legend.map(l => {
     const sel   = l.id === selectedId ? ' selected' : '';
@@ -1443,6 +1505,8 @@ function showDialog(title, data, mode, resId = null) {
         <select id="f-legend">${buildLegendSelect(data.legendId)}</select>
       </div>
     </div>
+    <!-- 改修(第5回): 分割入力欄コンテナ（分類に応じて動的生成） -->
+    <div id="f-label-fields"></div>
     <div id="form-row-label" class="form-row">
       <label>ラベル:</label>
       <input type="text" id="f-label" value="${data.label}" placeholder="プロジェクト名など">
@@ -1472,6 +1536,39 @@ function showDialog(title, data, mode, resId = null) {
   }
   document.getElementById('f-legend').addEventListener('change', updateSwatch);
   updateSwatch();
+
+  // 改修(第5回): 分類に応じて分割入力欄を出し分け、値からラベルを自動生成
+  function updateLabelFields() {
+    const leg  = _legend.find(l => l.id === document.getElementById('f-legend').value);
+    const name = leg ? leg.name : '';
+    const fieldSet   = getLabelFieldSet(name);
+    const container  = document.getElementById('f-label-fields');
+    const labelInput = document.getElementById('f-label');
+    if (!fieldSet) {
+      // その他分類：分割欄なし・ラベルは手入力
+      container.innerHTML = '';
+      labelInput.readOnly = false;
+      labelInput.placeholder = 'プロジェクト名など';
+      return;
+    }
+    // 分割入力欄を生成
+    container.innerHTML = fieldSet.parts.map(p =>
+      `<div class="form-row"><label>${p.label}:</label>` +
+      `<input type="text" class="f-label-part" data-key="${p.key}" placeholder="${p.placeholder}"></div>`
+    ).join('');
+    labelInput.readOnly = true;
+    labelInput.placeholder = '（自動生成）';
+    const recompose = () => {
+      const values = {};
+      container.querySelectorAll('.f-label-part').forEach(inp => { values[inp.dataset.key] = inp.value; });
+      const composed = composeLabel(fieldSet, values);
+      // 全欄空の場合は既存ラベル値を維持（編集時の初期値保持）
+      if (composed !== '') labelInput.value = composed;
+    };
+    container.querySelectorAll('.f-label-part').forEach(inp => inp.addEventListener('input', recompose));
+  }
+  document.getElementById('f-legend').addEventListener('change', updateLabelFields);
+  updateLabelFields();
 
   function updateBiz() {
     const s    = document.getElementById('f-start').value;
