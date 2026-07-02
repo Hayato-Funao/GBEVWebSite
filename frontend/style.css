@@ -712,3 +712,28 @@ body {
   color: #333;
   font-weight: bold;
 }
+
+/* 改修(第4回): 休日バー（土日と同じグレー・ラベルなし） */
+.gantt-table td.gantt-cell.res-holiday {
+  background-color: #c8c8c8 !important;
+}
+
+/* 改修(第4回): ルーム切替プルダウン */
+.room-select {
+  margin-left: 12px;
+  padding: 4px 8px;
+  font-size: 13px;
+  border: 1px solid #94a3b8;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #374151;
+  cursor: pointer;
+  vertical-align: middle;
+}
+/* ルームプルダウン（ダイアログ内・無効化状態の見た目） */
+#f-room[disabled] {
+  background: #f1f5f9;
+  color: #374151;
+  cursor: default;
+  opacity: 1;
+}

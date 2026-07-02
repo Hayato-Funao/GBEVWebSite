@@ -14,9 +14,10 @@ const WEEKDAY_JP   = ['月', '火', '水', '木', '金', '土', '日'];
 const CAL_MIN      = { year: 2025, month: 12 };
 const MAX_BIZ_DAYS = 20;
 // 改修: 予約状態（予備日・設備故障）の表示色とラベル定数
-const STATUS_SPARE_COLOR = '#00B0F0'; // 予備日：水色
-const STATUS_SPARE_TEXT  = '※予備日';
-const STATUS_FAULT_TEXT  = '故障';
+const STATUS_SPARE_COLOR   = '#00B0F0'; // 予備日：水色
+const STATUS_HOLIDAY_COLOR = '#c8c8c8'; // 改修(第4回): 休日：土日と同じグレー
+const STATUS_SPARE_TEXT    = '※予備日';
+const STATUS_FAULT_TEXT    = '故障';
 const EDGE_PX      = 10; // リサイズ端の判定幅（px）
 
 // ────────────────────────────────────────────
@@ -96,52 +97,86 @@ let _legend = loadLegend();
 // 環境名ストア（localStorage）
 // ────────────────────────────────────────────
 function loadMachines() {
-  // localStorageに保存済みのメイン筐体リストを読み込む。無ければデフォルト値のコピーを返す
-  // 後方互換: 旧データに予備行が含まれている場合はメインリストから除外する
+  // 改修(第4回): ルーム別マップ { west, south } を読み込む
+  // 旧形式（配列）は west ルームへマイグレーション
   try {
     const raw = localStorage.getItem(MACHINE_STORAGE_KEY);
     if (raw) {
-      const list = JSON.parse(raw);
-      return list.filter(name => !name.startsWith('予備'));
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        // 旧形式：配列は west へマイグレーション（予備行は除外）
+        return { west: parsed.filter(name => !name.startsWith('予備')), south: [] };
+      }
+      // 新形式：{west, south} オブジェクト
+      return {
+        west:  Array.isArray(parsed.west)  ? parsed.west  : HILS_MACHINES.slice(),
+        south: Array.isArray(parsed.south) ? parsed.south : [],
+      };
     }
   } catch (_) {}
-  return HILS_MACHINES.slice();
+  return { west: HILS_MACHINES.slice(), south: [] };
 }
-function saveMachines(machines) {
-  // 編集後のメイン筐体リストをlocalStorageに保存する
-  localStorage.setItem(MACHINE_STORAGE_KEY, JSON.stringify(machines));
+function saveMachines() {
+  // 改修(第4回): ルーム別マップ全体を保存する（引数なし・state.machinesByRoom を参照）
+  localStorage.setItem(MACHINE_STORAGE_KEY, JSON.stringify(state.machinesByRoom));
 }
 // 改修: 予備リストをlocalStorageから読み込む（無ければデフォルト値を返す）
+// 改修(第4回): ルーム別マップ { west, south } を読み込む
 // 後方互換: 旧データのメインリストに予備が含まれていた場合はそこから抽出する
 function loadSpares() {
   try {
     const raw = localStorage.getItem(SPARE_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-    // 旧データのメインリストに予備が含まれていた場合は抽出してマイグレーション
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        // 旧形式：配列は west ルームへマイグレーション
+        return { west: parsed, south: [] };
+      }
+      // 新形式：{west, south} オブジェクト
+      return {
+        west:  Array.isArray(parsed.west)  ? parsed.west  : HILS_SPARES.slice(),
+        south: Array.isArray(parsed.south) ? parsed.south : [],
+      };
+    }
+    // SPARE_STORAGE_KEY がない場合：MACHINE_STORAGE_KEY の旧形式から予備を抽出
     const mainRaw = localStorage.getItem(MACHINE_STORAGE_KEY);
     if (mainRaw) {
-      const mainList = JSON.parse(mainRaw);
-      const spares = mainList.filter(name => name.startsWith('予備'));
-      if (spares.length > 0) return spares;
+      const mainParsed = JSON.parse(mainRaw);
+      if (Array.isArray(mainParsed)) {
+        const spares = mainParsed.filter(name => name.startsWith('予備'));
+        if (spares.length > 0) return { west: spares, south: [] };
+      }
     }
   } catch (_) {}
-  return HILS_SPARES.slice();
+  return { west: HILS_SPARES.slice(), south: [] };
 }
-// 改修: 編集後の予備リストをlocalStorageに保存する
-function saveSpares(spares) {
-  localStorage.setItem(SPARE_STORAGE_KEY, JSON.stringify(spares));
+// 改修(第4回): ルーム別マップ全体を保存する（引数なし・state.sparesByRoom を参照）
+function saveSpares() {
+  localStorage.setItem(SPARE_STORAGE_KEY, JSON.stringify(state.sparesByRoom));
 }
 // 改修: 担当者マップをlocalStorageから読み込む（無ければ空オブジェクトを返す）
+// 改修(第4回): ルーム別マップ { west, south } を読み込む
 function loadAssignees() {
   try {
     const raw = localStorage.getItem(ASSIGNEE_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      // 旧形式判定：{west} キーを持たない場合は旧形式（単純オブジェクト）
+      if (!Object.prototype.hasOwnProperty.call(parsed, 'west')) {
+        return { west: parsed, south: {} };
+      }
+      // 新形式：{west, south} オブジェクト
+      return {
+        west:  (parsed.west  && typeof parsed.west  === 'object') ? parsed.west  : {},
+        south: (parsed.south && typeof parsed.south === 'object') ? parsed.south : {},
+      };
+    }
   } catch (_) {}
-  return {};
+  return { west: {}, south: {} };
 }
-// 改修: 担当者マップをlocalStorageに保存する
-function saveAssignees(map) {
-  localStorage.setItem(ASSIGNEE_STORAGE_KEY, JSON.stringify(map));
+// 改修(第4回): ルーム別マップ全体を保存する（引数なし・state.assigneesByRoom を参照）
+function saveAssignees() {
+  localStorage.setItem(ASSIGNEE_STORAGE_KEY, JSON.stringify(state.assigneesByRoom));
 }
 
 // ────────────────────────────────────────────
@@ -168,9 +203,13 @@ const state = {
   year:          new Date().getFullYear(),
   month:         new Date().getMonth() + 1,
   reservations:  [],
-  machines:      [],               // メイン筐体リスト（init()でlocalStorageから読み込み）
-  spares:        [],               // 改修: 予備リスト（init()でlocalStorageから読み込み）
-  assignees:     {},               // 改修: 担当者マップ { 筐体名: 担当者名 }（init()でlocalStorageから読み込み）
+  currentRoom:    'west',                    // 改修(第4回): 現在選択中のルーム（'west'|'south'）
+  machinesByRoom: { west: [], south: [] },   // 改修(第4回): ルーム別メイン筐体リスト
+  sparesByRoom:   { west: [], south: [] },   // 改修(第4回): ルーム別予備リスト
+  assigneesByRoom: { west: {}, south: {} },  // 改修(第4回): ルーム別担当者マップ
+  machines:      [],               // メイン筐体リスト（currentRoomへのビュー。syncRoomViewsで更新）
+  spares:        [],               // 改修: 予備リスト（currentRoomへのビュー。syncRoomViewsで更新）
+  assignees:     {},               // 改修: 担当者マップ（currentRoomへのビュー。syncRoomViewsで更新）
   selectedCells: new Set(),
   selectedResId: null,
   anchorCell:    null,
@@ -179,6 +218,15 @@ const state = {
 // 改修: メイン筐体と予備を結合した全環境名リストを返す（行インデックス計算に使用）
 function getAllMachines() {
   return [...state.machines, ...state.spares];
+}
+
+// 改修(第4回): 現在ルームのデータを state.machines/spares/assignees へバインドする
+// state.machinesByRoom[currentRoom] と state.machines は同じ配列オブジェクトを指すため、
+// 既存コードの splice/push/[idx]= 等の変更が machinesByRoom にも反映される
+function syncRoomViews() {
+  state.machines  = state.machinesByRoom[state.currentRoom];
+  state.spares    = state.sparesByRoom[state.currentRoom];
+  state.assignees = state.assigneesByRoom[state.currentRoom];
 }
 
 // ────────────────────────────────────────────
@@ -285,6 +333,8 @@ function buildResCellMap(year, month, reservations) {
   const monthEnd   = new Date(year, month - 1, daysInMonth(year, month));
 
   reservations.forEach((res, resId) => {
+    // 改修(第4回): 現在ルームの予約のみを描画する（両ルームで同名筐体が存在しても混在しない）
+    if ((res.room || 'west') !== state.currentRoom) return;
     if (!map[res.machine]) return;
 
     const resStart = isoToDate(res.start);
@@ -303,6 +353,8 @@ function buildResCellMap(year, month, reservations) {
       color = STATUS_SPARE_COLOR;
     } else if (resStatus === 'fault') {
       color = '#d9d9d9'; // 故障：グレー（CSSの斜線パターンと組み合わせて使用）
+    } else if (resStatus === 'holiday') {
+      color = STATUS_HOLIDAY_COLOR; // 改修(第4回): 休日：土日と同じグレー
     } else {
       color = (res.legendId && legendMap[res.legendId])
         ? legendMap[res.legendId].color
@@ -427,8 +479,8 @@ function renderCalendar() {
     machineDelBtn.title       = '削除';
     machineDelBtn.addEventListener('click', e => {
       e.stopPropagation();
-      // この筐体名を参照する予約が存在する場合は削除不可
-      const hasRes = state.reservations.some(r => r.machine === machine);
+      // この筐体名を参照する予約が存在する場合は削除不可（現在ルームのみ対象）
+      const hasRes = state.reservations.some(r => r.machine === machine && (r.room || 'west') === state.currentRoom);
       if (hasRes) {
         alert(`「${machine}」には予約が登録されているため削除できません。\n先に予約を削除してください。`);
         return;
@@ -437,15 +489,15 @@ function renderCalendar() {
       if (rowIdx < state.machines.length) {
         // メイン筐体リストから削除
         state.machines.splice(rowIdx, 1);
-        saveMachines(state.machines);
+        saveMachines();
       } else {
         // 予備リストから削除
         state.spares.splice(rowIdx - state.machines.length, 1);
-        saveSpares(state.spares);
+        saveSpares();
       }
       // 改修: 削除した筐体の担当者情報もマップから除去して保存
       delete state.assignees[machine];
-      saveAssignees(state.assignees);
+      saveAssignees();
       renderCalendar();
     });
     tdMachine.appendChild(machineDelBtn);
@@ -468,21 +520,23 @@ function renderCalendar() {
           // 改修: メイン筐体か予備かに応じてリストを更新してlocalStorageに保存
           if (rowIdx < state.machines.length) {
             state.machines[rowIdx] = newName;
-            saveMachines(state.machines);
+            saveMachines();
           } else {
             state.spares[rowIdx - state.machines.length] = newName;
-            saveSpares(state.spares);
+            saveSpares();
           }
-          // 旧名を参照している予約を新名へ追従（リネームで既存予約バーが消えないようにする）
+          // 旧名を参照している予約を新名へ追従（現在ルームのみ。リネームで既存予約バーが消えないようにする）
           state.reservations = state.reservations.map(res =>
-            res.machine === oldName ? { ...res, machine: newName } : res
+            (res.machine === oldName && (res.room || 'west') === state.currentRoom)
+              ? { ...res, machine: newName }
+              : res
           );
           saveReservations(state.reservations);
           // 改修: 担当者マップのキーを旧筐体名から新筐体名へ移行
           if (Object.prototype.hasOwnProperty.call(state.assignees, oldName)) {
             state.assignees[newName] = state.assignees[oldName];
             delete state.assignees[oldName];
-            saveAssignees(state.assignees);
+            saveAssignees();
           }
         }
         renderCalendar();
@@ -523,7 +577,7 @@ function renderCalendar() {
           } else {
             delete state.assignees[machine];
           }
-          saveAssignees(state.assignees);
+          saveAssignees();
         }
         renderCalendar();
       }
@@ -568,9 +622,11 @@ function renderCalendar() {
 
         if (resInfo.isStart) td.classList.add('res-edge-left');
         if (resInfo.isEnd)   td.classList.add('res-edge-right');
-        // 改修: 状態クラスを付与（予備日：res-spare / 設備故障：res-fault）
-        if (resInfo.status === 'spare') td.classList.add('res-spare');
-        if (resInfo.status === 'fault') td.classList.add('res-fault');
+        // 改修: 状態クラスを付与（予備日：res-spare / 設備故障：res-fault / 休日：res-holiday）
+        if (resInfo.status === 'spare')   td.classList.add('res-spare');
+        if (resInfo.status === 'fault')   td.classList.add('res-fault');
+        // 改修(第4回): 休日クラスを付与
+        if (resInfo.status === 'holiday') td.classList.add('res-holiday');
         // 隣セルの同一予約判定でセグメント端クラスを付与（連続バー化・選択外枠1本化に使用）
         const sameLeft  = resCells[machine]?.[col - 1]?.resId === resInfo.resId;
         const sameRight = resCells[machine]?.[col + 1]?.resId === resInfo.resId;
@@ -578,7 +634,8 @@ function renderCalendar() {
         if (!sameLeft)  td.classList.add('res-seg-left');   // セグメント左端
         if (!sameRight) td.classList.add('res-seg-right');  // セグメント右端
 
-        if (resInfo.isStart) {
+        // 改修(第4回): 休日はラベルなし（バー表示のみ）
+        if (resInfo.isStart && resInfo.status !== 'holiday') {
           const labelEl = document.createElement('span');
           labelEl.className = 'res-label';
           // 改修: 状態に応じてラベルを切り替え（予備日・故障は専用テキスト優先）
@@ -658,7 +715,8 @@ function renderCalendar() {
     addBtn.title       = '筐体を追加';
     addBtn.addEventListener('click', () => {
       // 次の筐体名候補（アルファベット連番）をpromptの初期値として算出
-      const lastMain = state.machines[state.machines.length - 1] || '筐体T';
+      // 改修(第4回): 南ルーム等で空の場合は既定名なし（旧: '筐体T' は西ルーム専用のため除去）
+      const lastMain = state.machines[state.machines.length - 1] || '';
       const lastChar = lastMain.replace('筐体', '');
       const nextCode = lastChar.length === 1
         ? String.fromCharCode(lastChar.charCodeAt(0) + 1)
@@ -673,7 +731,7 @@ function renderCalendar() {
         return;
       }
       state.machines.push(trimmed);
-      saveMachines(state.machines);
+      saveMachines();
       renderCalendar();
     });
     addTdHeader.appendChild(addBtn);
@@ -1051,8 +1109,10 @@ function updateInfoPanel() {
   machine.textContent = `筐体:  ${res.machine}`;
   period.textContent  = `期間:  ${periodStr}  （${biz}営業日）`;
   // 改修: 状態が通常以外の場合は状態名を優先表示
-  const statusLabel = res.status === 'spare' ? STATUS_SPARE_TEXT
-                    : res.status === 'fault' ? STATUS_FAULT_TEXT
+  // 改修(第4回): 休日ステータスを情報パネルに表示
+  const statusLabel = res.status === 'spare'   ? STATUS_SPARE_TEXT
+                    : res.status === 'fault'   ? STATUS_FAULT_TEXT
+                    : res.status === 'holiday' ? '休日'
                     : (res.label || '');
   label.textContent = `ラベル:  ${statusLabel}`;
 
@@ -1121,6 +1181,16 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
       p.classList.toggle('active', p.id === `page-${page}`);
     });
   });
+});
+
+// 改修(第4回): ルーム切替プルダウンの change ハンドラ
+document.getElementById('room-select').addEventListener('change', e => {
+  const room = e.target.value;
+  if (room === state.currentRoom) return;
+  state.currentRoom = room;
+  syncRoomViews();
+  clearSelection();
+  renderCalendar();
 });
 
 // ────────────────────────────────────────────
@@ -1295,6 +1365,7 @@ function openRegisterDialog() {
     applicant: '', // 申請者（新規登録時は空）
     remark:    '', // 備考（新規登録時は空）
     status:    'normal', // 改修: 新規登録はデフォルトで通常状態
+    room:      state.currentRoom, // 改修(第4回): 現在選択中のルームを自動設定
   }, 'register');
 }
 
@@ -1310,6 +1381,7 @@ function openEditDialog(resId) {
     applicant: res.applicant || '', // 既存の申請者（未設定の場合は空文字）
     remark:    res.remark    || '', // 既存の備考（未設定の場合は空文字）
     status:    res.status    || 'normal', // 改修: 既存の状態（未設定の場合は通常）
+    room:      res.room      || 'west',   // 改修(第4回): 既存のルーム（未設定の場合は西HILSルーム）
   }, 'edit', resId);
 }
 
@@ -1332,6 +1404,13 @@ function showDialog(title, data, mode, resId = null) {
 
   bodyEl.innerHTML = `
     <div class="form-row">
+      <label>ルーム:</label>
+      <select id="f-room" disabled>
+        <option value="west"${(data.room || 'west') === 'west' ? ' selected' : ''}>西HILSルーム</option>
+        <option value="south"${data.room === 'south' ? ' selected' : ''}>南HILSルーム</option>
+      </select>
+    </div>
+    <div class="form-row">
       <label>筐体:</label>
       <select id="f-machine">
         ${getAllMachines().map(m =>
@@ -1345,6 +1424,7 @@ function showDialog(title, data, mode, resId = null) {
         <option value="normal"${(data.status || 'normal') === 'normal' ? ' selected' : ''}>通常</option>
         <option value="spare"${data.status === 'spare' ? ' selected' : ''}>予備日</option>
         <option value="fault"${data.status === 'fault' ? ' selected' : ''}>設備故障</option>
+        <option value="holiday"${data.status === 'holiday' ? ' selected' : ''}>休日</option>
       </select>
     </div>
     <div class="form-row">
@@ -1446,6 +1526,7 @@ function showDialog(title, data, mode, resId = null) {
     const lm       = getLegendMap(_legend);
     const color    = lm[legendId] ? lm[legendId].color : '#fde68a';
     const resData  = {
+      room:      document.getElementById('f-room').value,     // 改修(第4回): ルーム
       machine:   document.getElementById('f-machine').value,
       start:     document.getElementById('f-start').value,
       end:       document.getElementById('f-end').value,
@@ -1506,12 +1587,13 @@ function mapLegacyMachine(name) {
 // 初期化
 // ────────────────────────────────────────────
 async function init() {
-  // 環境名リストをlocalStorageから読み込む（無ければデフォルト値を使用）
-  state.machines  = loadMachines();
-  // 改修: 予備リストをlocalStorageから読み込む（無ければデフォルト値を使用）
-  state.spares    = loadSpares();
-  // 改修: 担当者マップをlocalStorageから読み込む（無ければ空オブジェクトを使用）
-  state.assignees = loadAssignees();
+  // 改修(第4回): ルーム別マップをlocalStorageから読み込み、ビューをバインドする
+  state.machinesByRoom  = loadMachines();
+  state.sparesByRoom    = loadSpares();
+  state.assigneesByRoom = loadAssignees();
+  syncRoomViews();
+  // 改修(第4回): ルームプルダウンの初期選択値を currentRoom に合わせる
+  document.getElementById('room-select').value = state.currentRoom;
 
   const saved = loadReservations();
   if (saved !== null) {
@@ -1592,10 +1674,11 @@ async function saveCalendarImage() {
     ctx.drawImage(tableCanvas, 0, 0);
     if (legendCanvas) ctx.drawImage(legendCanvas, tableCanvas.width, 0);
 
-    // 保存ファイル名: 予約表_YYYYMMDD.png（保存実行日）
+    // 改修(第4回): 保存ファイル名に現在ルーム名を付与（例: 予約表_西HILS_20260702.png）
     const now = new Date();
     const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-    const filename = `予約表_${ymd}.png`;
+    const roomLabel = state.currentRoom === 'west' ? '西HILS' : '南HILS';
+    const filename = `予約表_${roomLabel}_${ymd}.png`;
 
     // 合成 Canvas → Blob → ダウンロード
     merged.toBlob(blob => {
