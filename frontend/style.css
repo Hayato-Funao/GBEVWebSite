@@ -163,11 +163,11 @@ body {
   border: 1px solid #cbd5e1;
 }
 
+/* 改修(第7回): 通し表示化のため幅をautoに変更（min-width撤廃・横スクロールで全期間表示） */
 .gantt-table {
   border-collapse: collapse;
   table-layout: fixed;
-  width: 100%;
-  min-width: 900px;
+  width: auto;
 }
 
 /* 行ヘッダー（機種名） */
@@ -192,7 +192,8 @@ body {
 .gantt-table thead th.machine-col {
   background: #e2e8f0;
   border-bottom: 1px solid #94a3b8;
-  height: 44px;
+  /* 改修(第7回): 月見出し行(22px)+日付行(44px)の2行分を占有するため高さを66pxに変更 */
+  height: 66px;
   font: bold 11px 'Meiryo UI', sans-serif;
   /* 日付ヘッダー(z-index:4)より上に置き、左上コーナーセルが隠れないようにする */
   z-index: 5;
@@ -213,14 +214,15 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   position: sticky;
-  left: 169px; /* 改修: border-collapse×sticky の継ぎ目透け対策で1px左へずらして筐体列背景で覆う */
+  left: var(--assignee-left, 169px); /* 改修(第7回追補2): 筐体列の実描画幅に追従（applyDateColWidth が CSS変数を設定）。フォールバック169px */
   z-index: 2;
   box-shadow: inset 1px 0 0 0 #d1d5db; /* 改修: border-collapse では sticky に追従しないため box-shadow でセルと同じ縦罫線（#d1d5db）を再現 */
 }
 .gantt-table thead th.assignee-col {
   background: #e2e8f0;
   border-bottom: 1px solid #94a3b8;
-  height: 44px;
+  /* 改修(第7回): 月見出し行(22px)+日付行(44px)の2行分を占有するため高さを66pxに変更 */
+  height: 66px;
   font: bold 11px 'Meiryo UI', sans-serif;
   z-index: 5;
 }
@@ -238,7 +240,31 @@ body {
   white-space: nowrap;
 }
 
-/* 列ヘッダー（日付） */
+/* 改修(第7回追補): colgroup の col 幅を CSS変数と同期させるルール
+   JS の applyDateColWidth() がインラインスタイルでも上書きするが、
+   CSS変数フォールバックとして定義しておく */
+.gantt-table col.col-machine  { width: 170px; }
+.gantt-table col.col-assignee { width: 80px; }
+.gantt-table col.col-date     { width: var(--date-col-w, 26px); }
+
+/* 改修(第7回): 月見出し行（通し表示のヘッダ1行目） */
+.gantt-table th.month-col {
+  background: #c7d2e0;
+  font: bold 11px 'Meiryo UI', sans-serif;
+  color: #1e293b;
+  border-right: 2px solid #94a3b8;
+  border-bottom: 1px solid #94a3b8;
+  padding: 2px 0;
+  text-align: center;
+  vertical-align: middle;
+  height: 22px;
+  /* 月見出し行を縦スクロール追従（日付行の下に隠れないよう最上段に固定） */
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+
+/* 列ヘッダー（日付）*/
 .gantt-table th.date-col {
   background: #e2e8f0;
   font: bold 11px 'Meiryo UI', sans-serif;
@@ -250,9 +276,11 @@ body {
   vertical-align: middle;
   line-height: 1.3;
   height: 44px;
-  /* 日付ヘッダーを縦スクロール追従・最前面化（予約バーの裏に隠れる問題を解消） */
+  /* 改修(第7回追補): 日付列幅をCSS変数で管理（JSが31日フィット幅を動的に設定） */
+  width: var(--date-col-w, 26px);
+  /* 改修(第7回): 月見出し行(22px)の下に sticky 固定 */
   position: sticky;
-  top: 0;
+  top: 22px;
   z-index: 4;
 }
 .gantt-table th.date-col.weekend  { background: #d1d5db; color: #64748b; }
@@ -261,6 +289,8 @@ body {
 /* データセル */
 .gantt-table td.gantt-cell {
   height: 30px;
+  /* 改修(第7回追補): 日付列幅をCSS変数で管理（colgroup と同期） */
+  width: var(--date-col-w, 26px);
   border-right: 1px solid #d1d5db;
   border-bottom: 1px solid #d1d5db;
   background: #fff;
@@ -317,6 +347,20 @@ body {
   white-space: nowrap;
   pointer-events: none;
   z-index: 1;
+}
+
+/* 改修(第8回): 検証完了★マーカー（res-label内に絶対配置・left はJS側で設定）
+   開始セルのlabelEl内に置くことで選択時も全★が表示される */
+.res-mark {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  font: bold 10px 'Meiryo UI', sans-serif;
+  color: #1e293b;      /* ラベルと同じ黒系 */
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 /* 備考（予約バー終了セル内の右端に表示。left:100%→right:3px に変更して飛び出しを解消） */
@@ -458,6 +502,38 @@ body {
 
 .biz-label  { font: bold 12px 'Meiryo UI', sans-serif; color: #4f46e5; margin-top: 6px; }
 .warn-label { font-size: 10px; color: #dc2626; margin-top: 4px; }
+
+/* 改修(第8回): ダイアログ内・検証完了日（★）セクション */
+.form-marks-group {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 8px 10px 4px;
+  margin-bottom: 10px;
+}
+.form-marks-title {
+  font-size: 11px;
+  font-weight: bold;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+/* ★チェックボックス行: label部分（チェックボックス＋テキスト） */
+.mark-chk-label {
+  width: 90px;
+  font-size: 11px;
+  color: #1e293b;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+/* ★バッジ（種別ラベルの右に表示） */
+.mark-star-badge {
+  font: bold 11px 'Meiryo UI', sans-serif;
+  color: #b91c1c;
+  flex-shrink: 0;
+  min-width: 42px;
+}
 /* 改修(第5回): 自動生成ラベル欄（読み取り専用の見た目） */
 #f-label[readonly] { background: #f1f5f9; color: #475569; }
 /* 改修(第5回): ガントバーのXPXラベルリンク（バー文字色を継承し下線のみ付与） */

@@ -12,13 +12,27 @@ const HILS_SPARES = ['予備1', '予備2'];
 
 const WEEKDAY_JP   = ['月', '火', '水', '木', '金', '土', '日'];
 const CAL_MIN      = { year: 2025, month: 12 };
-const MAX_BIZ_DAYS = 20;
+// 改修(第7回): MAX_BIZ_DAYS 撤廃（上限なし）
 // 改修: 予約状態（予備日・設備故障）の表示色とラベル定数
 const STATUS_SPARE_COLOR   = '#00B0F0'; // 予備日：水色
 const STATUS_HOLIDAY_COLOR = '#c8c8c8'; // 改修(第4回): 休日：土日と同じグレー
 const STATUS_SPARE_TEXT    = '※予備日';
 const STATUS_FAULT_TEXT    = '故障';
-const EDGE_PX      = 10; // リサイズ端の判定幅（px）
+const EDGE_PX        = 10; // リサイズ端の判定幅（px）
+// 改修(第7回追補): 日付列の最小幅（px）。動的フィット計算がこれを下回った場合に使用
+const DATE_COL_MIN   = 18;
+
+// 改修(第8回): 検証完了日★マーカーの種別定義（種別キー・表示ラベル・★表記の対応表）
+const VERIFY_MARKS = [
+  { key: 'tmg',   label: 'TMG検証',   star: 'TMG★'   },
+  { key: 'diag',  label: '診断機検証', star: '診断機★' },
+  { key: 'iumpr', label: 'IUMPR検証', star: '★'       },
+];
+// 改修(第8回): 種別キー → ★表示テキスト変換（未知の種別は汎用★を返す）
+function starTextForType(type) {
+  const m = VERIFY_MARKS.find(v => v.key === type);
+  return m ? m.star : '★';
+}
 
 // ────────────────────────────────────────────
 // 改修(第6回): クエリパラメータによる権限判定（見た目のみ・認証ではない）
@@ -226,6 +240,9 @@ function genLocalId() { return _nextLocalId++; }
 const state = {
   year:          new Date().getFullYear(),
   month:         new Date().getMonth() + 1,
+  viewStart:     null,     // 改修(第7回): 通し表示の開始日（先月の月初）
+  viewEnd:       null,     // 改修(第7回): 通し表示の終了日（3か月先/年度末の長い方）
+  viewDates:     [],       // 改修(第7回): 表示期間の全日配列（列インデックス = 添字）
   reservations:  [],
   currentRoom:    'west',                    // 改修(第4回): 現在選択中のルーム（'west'|'south'）
   machinesByRoom: { west: [], south: [] },   // 改修(第4回): ルーム別メイン筐体リスト
@@ -245,8 +262,6 @@ function getAllMachines() {
 }
 
 // 改修(第4回): 現在ルームのデータを state.machines/spares/assignees へバインドする
-// state.machinesByRoom[currentRoom] と state.machines は同じ配列オブジェクトを指すため、
-// 既存コードの splice/push/[idx]= 等の変更が machinesByRoom にも反映される
 function syncRoomViews() {
   state.machines  = state.machinesByRoom[state.currentRoom];
   state.spares    = state.sparesByRoom[state.currentRoom];
@@ -269,12 +284,36 @@ function dateToIso(date) {
 function daysInMonth(year, month) {
   return new Date(year, month, 0).getDate();
 }
-function maxCalYM() {
-  const now = new Date();
-  let m = now.getMonth() + 1 + 2;
-  let y = now.getFullYear();
-  if (m > 12) { m -= 12; y++; }
-  return { year: y, month: m };
+// 改修(第7回): 表示期間を初期化する（先月月初〜3か月先月末/年度末の長い方）
+function initViewRange() {
+  const today = new Date();
+  // 開始: 先月の月初
+  state.viewStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  // 終了: 今日+3か月の月末 と 今年度末（翌3/31）の長い方
+  const threeEnd  = new Date(today.getFullYear(), today.getMonth() + 4, 0);
+  const fy        = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+  const fiscalEnd = new Date(fy + 1, 2, 31);
+  state.viewEnd   = threeEnd > fiscalEnd ? threeEnd : fiscalEnd;
+  // 全日配列を構築（列インデックス = 添字）
+  state.viewDates = [];
+  const d = new Date(state.viewStart);
+  while (d <= state.viewEnd) {
+    state.viewDates.push(new Date(d));
+    d.setDate(d.getDate() + 1);
+  }
+}
+// 改修(第7回): 日付 → 列インデックス（表示範囲外は null）
+function dateToCol(date) {
+  const vs   = state.viewStart;
+  const d    = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const s    = new Date(vs.getFullYear(), vs.getMonth(), vs.getDate());
+  const diff = Math.round((d - s) / 86400000);
+  if (diff < 0 || diff >= state.viewDates.length) return null;
+  return diff;
+}
+// 改修(第7回): 列インデックス → 日付
+function colToDate(col) {
+  return state.viewDates[col] || null;
 }
 function bizDaysBetween(start, end) {
   let count = 0;
@@ -346,39 +385,41 @@ async function fetchReservations() {
 }
 
 // ────────────────────────────────────────────
-// 予約→セルマップ構築（凡例参照方式）
+// 予約→セルマップ構築
 // ────────────────────────────────────────────
-function buildResCellMap(year, month, reservations) {
+// 改修(第7回): 引数から year/month を撤去し viewDates 基準に変更
+function buildResCellMap(reservations) {
   const legendMap  = getLegendMap(_legend);
   const map        = {};
-  getAllMachines().forEach(m => { map[m] = {}; }); // 改修: メイン筐体＋予備の全環境名を参照
+  getAllMachines().forEach(m => { map[m] = {}; });
 
-  const monthStart = new Date(year, month - 1, 1);
-  const monthEnd   = new Date(year, month - 1, daysInMonth(year, month));
+  const viewStart = state.viewStart;
+  const viewEnd   = state.viewEnd;
 
   reservations.forEach((res, resId) => {
-    // 改修(第4回): 現在ルームの予約のみを描画する（両ルームで同名筐体が存在しても混在しない）
+    // 改修(第4回): 現在ルームの予約のみを描画する
     if ((res.room || 'west') !== state.currentRoom) return;
     if (!map[res.machine]) return;
 
     const resStart = isoToDate(res.start);
     const resEnd   = isoToDate(res.end);
-    if (resEnd < monthStart || resStart > monthEnd) return;
+    // 改修(第7回): クリップ境界を viewStart/viewEnd に変更
+    if (resEnd < viewStart || resStart > viewEnd) return;
 
-    const dispStart   = resStart < monthStart ? new Date(monthStart) : new Date(resStart);
-    const dispEnd     = resEnd   > monthEnd   ? new Date(monthEnd)   : new Date(resEnd);
-    const isRealStart = resStart >= monthStart;
-    const isRealEnd   = resEnd   <= monthEnd;
+    const dispStart   = resStart < viewStart ? new Date(viewStart) : new Date(resStart);
+    const dispEnd     = resEnd   > viewEnd   ? new Date(viewEnd)   : new Date(resEnd);
+    const isRealStart = resStart >= viewStart;
+    const isRealEnd   = resEnd   <= viewEnd;
 
-    // 改修: 状態（予備日・設備故障）に応じて色を解決。通常は凡例参照
+    // 改修: 状態に応じて色を解決
     const resStatus = res.status || 'normal';
     let color;
     if (resStatus === 'spare') {
       color = STATUS_SPARE_COLOR;
     } else if (resStatus === 'fault') {
-      color = '#d9d9d9'; // 故障：グレー（CSSの斜線パターンと組み合わせて使用）
+      color = '#d9d9d9';
     } else if (resStatus === 'holiday') {
-      color = STATUS_HOLIDAY_COLOR; // 改修(第4回): 休日：土日と同じグレー
+      color = STATUS_HOLIDAY_COLOR;
     } else {
       color = (res.legendId && legendMap[res.legendId])
         ? legendMap[res.legendId].color
@@ -389,7 +430,9 @@ function buildResCellMap(year, month, reservations) {
     let lastCol  = null;
 
     for (let d = new Date(dispStart); d <= dispEnd; d.setDate(d.getDate() + 1)) {
-      const col  = d.getDate() - 1;
+      // 改修(第7回): 列インデックスを dateToCol で算出
+      const col  = dateToCol(d);
+      if (col === null) continue;
       const wday = d.getDay();
       if (wday === 0 || wday === 6) continue;
       if (firstCol === null) firstCol = col;
@@ -397,10 +440,10 @@ function buildResCellMap(year, month, reservations) {
       map[res.machine][col] = {
         resId,
         color,
-        status:    resStatus,       // 改修: 状態（normal/spare/fault）をセルマップに転記
+        status:    resStatus,
         label:     res.label || '',
-        legendId:  res.legendId || '', // 改修(第5回): 凡例IDをセルマップに転記（ラベルリンク化の判定に使用）
-        applicant: res.applicant || '', // 申請者名をセルマップに転記（バー上ラベル表示に使用）
+        legendId:  res.legendId || '',
+        applicant: res.applicant || '',
         isStart:   false,
         isEnd:     false,
       };
@@ -408,7 +451,11 @@ function buildResCellMap(year, month, reservations) {
     if (firstCol !== null) map[res.machine][firstCol].isStart = isRealStart;
     if (lastCol  !== null) {
       map[res.machine][lastCol].isEnd  = isRealEnd;
-      map[res.machine][lastCol].remark = res.remark || ''; // 備考を終了列セルに格納して描画に使用
+      map[res.machine][lastCol].remark = res.remark || '';
+    }
+    // 改修(第8回): 全検証完了★を開始セルに格納（ラベル内配置のため）
+    if (firstCol !== null) {
+      map[res.machine][firstCol].resMarks = res.marks || [];
     }
   });
 
@@ -418,57 +465,115 @@ function buildResCellMap(year, month, reservations) {
 // ────────────────────────────────────────────
 // カレンダー描画
 // ────────────────────────────────────────────
+// 改修(第7回): 月ごとページ分けから期間通し表示（左右スクロール）へ全面再構築
 function renderCalendar() {
-  const { year, month, reservations, selectedCells, selectedResId } = state;
-  const days     = daysInMonth(year, month);
-  const firstDay = new Date(year, month - 1, 1).getDay();
+  const { reservations, selectedCells, selectedResId } = state;
+  const viewDates  = state.viewDates;
+  const totalCols  = viewDates.length;
 
   const today  = new Date();
   const todayY = today.getFullYear();
-  const todayM = today.getMonth() + 1;
+  const todayM = today.getMonth();
   const todayD = today.getDate();
 
-  document.getElementById('month-label').textContent = `${year}年${month}月`;
+  // 改修(第7回): 表示範囲をラベルに反映
+  const vsY = state.viewStart.getFullYear();
+  const vsM = state.viewStart.getMonth() + 1;
+  const veY = state.viewEnd.getFullYear();
+  const veM = state.viewEnd.getMonth() + 1;
+  document.getElementById('month-label').textContent =
+    `${vsY}年${vsM}月 〜 ${veY}年${veM}月`;
 
-  const max = maxCalYM();
-  document.getElementById('prev-btn').disabled =
-    year === CAL_MIN.year && month === CAL_MIN.month;
-  document.getElementById('next-btn').disabled =
-    year === max.year && month === max.month;
+  // 改修(第7回追補): colgroup を毎回再構築して列幅を確定する
+  // table-layout:fixed では colgroup の col 幅が rowspan/colspan に優先されるため
+  // 月見出し行(colspan N)に覆われた日付列の幅も確実に制御できる
+  const table = document.getElementById('gantt-table');
+  const existingCg = table.querySelector('colgroup');
+  if (existingCg) existingCg.remove();
+  const cg = document.createElement('colgroup');
+  // 筐体列（170px固定）
+  const colMachine = document.createElement('col');
+  colMachine.className = 'col-machine';
+  colMachine.style.width = '170px';
+  cg.appendChild(colMachine);
+  // 担当者列（表示時80px / 非表示時0px）
+  const colAssignee = document.createElement('col');
+  colAssignee.className = 'col-assignee';
+  colAssignee.style.width = table.classList.contains('assignee-hidden') ? '0px' : '80px';
+  cg.appendChild(colAssignee);
+  // 日付列（CSS変数 --date-col-w を参照。初期値は仮置き、直後に applyDateColWidth で更新）
+  for (let i = 0; i < totalCols; i++) {
+    const colDate = document.createElement('col');
+    colDate.className  = 'col-date';
+    colDate.style.width = 'var(--date-col-w, 26px)';
+    cg.appendChild(colDate);
+  }
+  table.insertBefore(cg, table.firstChild);
 
-  // thead
-  const thead     = document.getElementById('gantt-head');
+  // thead（改修(第7回): 2行構成 ─ 行1:月見出し / 行2:日付）
+  const thead = document.getElementById('gantt-head');
   thead.innerHTML = '';
-  const headerRow = document.createElement('tr');
-  const thMachine = document.createElement('th');
-  thMachine.className   = 'machine-col';
-  thMachine.textContent = '筐体';
-  headerRow.appendChild(thMachine);
 
-  // 改修: 担当者列ヘッダを筐体列の右隣に追加
+  // 行1: 月見出し行
+  const monthRow   = document.createElement('tr');
+  // 改修(第7回): 筐体列・担当者列は rowSpan=2 で両ヘッダ行を占有
+  const thMachine  = document.createElement('th');
+  thMachine.className   = 'machine-col';
+  thMachine.rowSpan     = 2;
+  thMachine.textContent = '筐体';
+  monthRow.appendChild(thMachine);
+
   const thAssignee = document.createElement('th');
   thAssignee.className   = 'assignee-col';
+  thAssignee.rowSpan     = 2;
   thAssignee.textContent = '担当者';
-  headerRow.appendChild(thAssignee);
+  monthRow.appendChild(thAssignee);
 
-  for (let d = 1; d <= days; d++) {
-    const wday   = (firstDay + d - 1) % 7;
-    const wdayJp = wday === 0 ? 6 : wday - 1;
-    const isWkd  = (wday === 0 || wday === 6);
-    const isTod  = (year === todayY && month === todayM && d === todayD);
-    const th     = document.createElement('th');
-    th.className = 'date-col' + (isWkd ? ' weekend' : '') + (isTod ? ' today-hd' : '');
-    th.innerHTML = `${d}<br><span style="font-size:10px;font-weight:normal">${WEEKDAY_JP[wdayJp]}</span>`;
-    headerRow.appendChild(th);
+  // 改修(第7回): 月ごとに colspan 結合した月見出しセルを生成
+  let mCol = 0;
+  while (mCol < totalCols) {
+    const dRef = viewDates[mCol];
+    const yr = dRef.getFullYear();
+    const mo = dRef.getMonth();
+    let span = 0;
+    let c = mCol;
+    while (c < totalCols && viewDates[c].getFullYear() === yr && viewDates[c].getMonth() === mo) {
+      span++;
+      c++;
+    }
+    const thMonth = document.createElement('th');
+    thMonth.className   = 'month-col';
+    thMonth.colSpan     = span;
+    thMonth.textContent = `${yr}年${dRef.getMonth() + 1}月`;
+    monthRow.appendChild(thMonth);
+    mCol = c;
   }
-  thead.appendChild(headerRow);
+  thead.appendChild(monthRow);
+
+  // 行2: 日付行
+  const dateRow = document.createElement('tr');
+  for (let col = 0; col < totalCols; col++) {
+    const d    = viewDates[col];
+    const wday = d.getDay();
+    const isWkd = (wday === 0 || wday === 6);
+    const isTod = d.getFullYear() === todayY && d.getMonth() === todayM && d.getDate() === todayD;
+    // 曜日表示用インデックス変換（JS: 0=日〜6=土 → WEEKDAY_JP: 0=月〜6=日）
+    const wdayJp = wday === 0 ? 6 : wday - 1;
+    const th = document.createElement('th');
+    th.className   = 'date-col' + (isWkd ? ' weekend' : '') + (isTod ? ' today-hd' : '');
+    th.dataset.col = col;
+    th.innerHTML   = `${d.getDate()}<br><span style="font-size:10px;font-weight:normal">${WEEKDAY_JP[wdayJp]}</span>`;
+    dateRow.appendChild(th);
+  }
+  thead.appendChild(dateRow);
 
   // tbody
-  const tbody     = document.getElementById('gantt-body');
+  const tbody    = document.getElementById('gantt-body');
   tbody.innerHTML = '';
-  const resCells  = buildResCellMap(year, month, reservations);
+  // 改修(第7回): buildResCellMap の引数変更（year/month 撤去）
+  const resCells = buildResCellMap(reservations);
 
-  // ドラッグ中プレビュー: previewMap[key]={color} / ghostKeys=Set
+  // ドラッグ中プレビュー
   const previewMap = {};
   const ghostKeys  = new Set();
   if (_drag.active && _drag.previewCells && _drag.ghostCells) {
@@ -481,33 +586,27 @@ function renderCalendar() {
     _drag.ghostCells.forEach(k => ghostKeys.add(k));
   }
 
-  // 改修: 行描画ヘルパー（メイン筐体・予備とも共用）
-  // rowIdx は getAllMachines() 上の通算インデックス（ドラッグ・セル data-row に使用）
+  // 行描画ヘルパー
   function buildMachineRow(machine, rowIdx) {
     const tr = document.createElement('tr');
 
     // 機種名セル（左固定列）
     const tdMachine = document.createElement('td');
     tdMachine.className = 'machine-col';
-    // 改修(第6回): ユーザー編集ロックダウン - tooltip を権限別に変える
     tdMachine.title     = isAdmin ? `${machine}（ダブルクリックで編集）` : machine;
 
-    // 機種名テキストをspan要素で内包（削除ボタンと並列表示のため）
     const nameSpan = document.createElement('span');
     nameSpan.className   = 'machine-name';
     nameSpan.textContent = machine;
     tdMachine.appendChild(nameSpan);
 
-    // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ筐体削除ボタンを生成・追加
     if (isAdmin) {
-      // 改修: 削除ボタン（×）－hover時のみ表示。予約が存在する行は削除不可
       const machineDelBtn = document.createElement('button');
       machineDelBtn.className   = 'machine-del-btn';
       machineDelBtn.textContent = '×';
       machineDelBtn.title       = '削除';
       machineDelBtn.addEventListener('click', e => {
         e.stopPropagation();
-        // この筐体名を参照する予約が存在する場合は削除不可（現在ルームのみ対象）
         const hasRes = state.reservations.some(r => r.machine === machine && (r.room || 'west') === state.currentRoom);
         if (hasRes) {
           alert(`「${machine}」には予約が登録されているため削除できません。\n先に予約を削除してください。`);
@@ -515,15 +614,12 @@ function renderCalendar() {
         }
         if (!confirm(`「${machine}」を削除しますか？`)) return;
         if (rowIdx < state.machines.length) {
-          // メイン筐体リストから削除
           state.machines.splice(rowIdx, 1);
           saveMachines();
         } else {
-          // 予備リストから削除
           state.spares.splice(rowIdx - state.machines.length, 1);
           saveSpares();
         }
-        // 改修: 削除した筐体の担当者情報もマップから除去して保存
         delete state.assignees[machine];
         saveAssignees();
         renderCalendar();
@@ -531,10 +627,9 @@ function renderCalendar() {
       tdMachine.appendChild(machineDelBtn);
     }
 
-    // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ筐体名インライン編集を有効化
     if (isAdmin) {
       tdMachine.addEventListener('dblclick', () => {
-        const oldName   = getAllMachines()[rowIdx]; // 改修: getAll経由でrowIdxを参照
+        const oldName   = getAllMachines()[rowIdx];
         const editInput = document.createElement('input');
         editInput.type      = 'text';
         editInput.value     = oldName;
@@ -547,7 +642,6 @@ function renderCalendar() {
         function commitEdit() {
           const newName = editInput.value.trim();
           if (newName && newName !== oldName) {
-            // 改修: メイン筐体か予備かに応じてリストを更新してlocalStorageに保存
             if (rowIdx < state.machines.length) {
               state.machines[rowIdx] = newName;
               saveMachines();
@@ -555,14 +649,12 @@ function renderCalendar() {
               state.spares[rowIdx - state.machines.length] = newName;
               saveSpares();
             }
-            // 旧名を参照している予約を新名へ追従（現在ルームのみ。リネームで既存予約バーが消えないようにする）
             state.reservations = state.reservations.map(res =>
               (res.machine === oldName && (res.room || 'west') === state.currentRoom)
                 ? { ...res, machine: newName }
                 : res
             );
             saveReservations(state.reservations);
-            // 改修: 担当者マップのキーを旧筐体名から新筐体名へ移行
             if (Object.prototype.hasOwnProperty.call(state.assignees, oldName)) {
               state.assignees[newName] = state.assignees[oldName];
               delete state.assignees[oldName];
@@ -573,23 +665,21 @@ function renderCalendar() {
         }
 
         editInput.addEventListener('keydown', e => {
-          if (e.key === 'Enter')  { editInput.blur(); }  // Enter で確定
-          if (e.key === 'Escape') { renderCalendar(); }  // Escape でキャンセル
+          if (e.key === 'Enter')  { editInput.blur(); }
+          if (e.key === 'Escape') { renderCalendar(); }
         });
-        editInput.addEventListener('blur', commitEdit); // フォーカス外れで確定
+        editInput.addEventListener('blur', commitEdit);
       });
     }
 
     tr.appendChild(tdMachine);
 
-    // 改修: 担当者セルを筐体列の右隣に挿入（筐体ごとの担当者を表示・インライン編集）
+    // 担当者セル
     const tdAssignee = document.createElement('td');
     tdAssignee.className = 'assignee-col';
-    // 改修(第6回): ユーザー編集ロックダウン - tooltip を権限別に変える
     tdAssignee.title     = isAdmin ? '担当者（ダブルクリックで編集）' : '担当者';
     tdAssignee.textContent = state.assignees[machine] || '';
 
-    // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ担当者インライン編集を有効化
     if (isAdmin) {
       tdAssignee.addEventListener('dblclick', () => {
         const currentVal    = state.assignees[machine] || '';
@@ -604,7 +694,6 @@ function renderCalendar() {
 
         function commitAssignee() {
           const newVal = assigneeInput.value.trim();
-          // 改修: 値が変わった場合のみ担当者マップを更新してlocalStorageに保存
           if (newVal !== currentVal) {
             if (newVal) {
               state.assignees[machine] = newVal;
@@ -617,20 +706,21 @@ function renderCalendar() {
         }
 
         assigneeInput.addEventListener('keydown', e => {
-          if (e.key === 'Enter')  { assigneeInput.blur(); }  // Enter で確定
-          if (e.key === 'Escape') { renderCalendar(); }       // Escape でキャンセル
+          if (e.key === 'Enter')  { assigneeInput.blur(); }
+          if (e.key === 'Escape') { renderCalendar(); }
         });
-        assigneeInput.addEventListener('blur', commitAssignee); // フォーカス外れで確定
+        assigneeInput.addEventListener('blur', commitAssignee);
       });
     }
 
     tr.appendChild(tdAssignee);
 
-    for (let col = 0; col < days; col++) {
-      const d       = col + 1;
-      const wday    = (firstDay + col) % 7;
-      const isWkd   = (wday === 0 || wday === 6);
-      const isTod   = (year === todayY && month === todayM && d === todayD);
+    // 改修(第7回): 全表示期間の列（totalCols）を描画
+    for (let col = 0; col < totalCols; col++) {
+      const d     = viewDates[col];
+      const wday  = d.getDay();
+      const isWkd = (wday === 0 || wday === 6);
+      const isTod = d.getFullYear() === todayY && d.getMonth() === todayM && d.getDate() === todayD;
       const cellKey = `${rowIdx}-${col}`;
       const resInfo = resCells[machine]?.[col];
 
@@ -657,56 +747,60 @@ function renderCalendar() {
 
         if (resInfo.isStart) td.classList.add('res-edge-left');
         if (resInfo.isEnd)   td.classList.add('res-edge-right');
-        // 改修: 状態クラスを付与（予備日：res-spare / 設備故障：res-fault / 休日：res-holiday）
         if (resInfo.status === 'spare')   td.classList.add('res-spare');
         if (resInfo.status === 'fault')   td.classList.add('res-fault');
-        // 改修(第4回): 休日クラスを付与
         if (resInfo.status === 'holiday') td.classList.add('res-holiday');
-        // 隣セルの同一予約判定でセグメント端クラスを付与（連続バー化・選択外枠1本化に使用）
         const sameLeft  = resCells[machine]?.[col - 1]?.resId === resInfo.resId;
         const sameRight = resCells[machine]?.[col + 1]?.resId === resInfo.resId;
-        if (sameRight)  td.classList.add('res-join-right'); // 右隣と連結（縦境界線を完全除去）
-        if (!sameLeft)  td.classList.add('res-seg-left');   // セグメント左端
-        if (!sameRight) td.classList.add('res-seg-right');  // セグメント右端
+        if (sameRight)  td.classList.add('res-join-right');
+        if (!sameLeft)  td.classList.add('res-seg-left');
+        if (!sameRight) td.classList.add('res-seg-right');
 
-        // 改修(第4回): 休日はラベルなし（バー表示のみ）
         if (resInfo.isStart && resInfo.status !== 'holiday') {
-          // ラベルテキストを決定（予備日・故障は専用テキスト優先、通常は「申請者名）ラベル」形式）
           let text;
           if (resInfo.status === 'spare')      text = STATUS_SPARE_TEXT;
           else if (resInfo.status === 'fault') text = STATUS_FAULT_TEXT;
           else text = resInfo.applicant ? `${resInfo.applicant}）${resInfo.label}` : resInfo.label;
 
-          // 外側コンテナは従来通り span.res-label（幅9999px・pointer-events:none）
           const labelEl = document.createElement('span');
           labelEl.className = 'res-label';
 
-          // 改修(第5回): XPX（FI/EDR）通常予約はテキストのみを内側<a>でラップしてリンク化
           const legName   = (_legend.find(l => l.id === resInfo.legendId) || {}).name || '';
           const isXpxLink = resInfo.status === 'normal' && isXpxLinkLegend(legName);
           if (isXpxLink) {
-            // 不具合修正: 親.res-labelがpointer-events:noneのため<a>自体をコンテナにすると
-            // クリックイベントが届かない。内側<a>（pointer-events:auto）でテキストのみラップする
             const a = document.createElement('a');
             a.className = 'res-label-link';
             a.href = XPX_LINK_URL; a.target = '_blank'; a.rel = 'noopener';
             a.title = 'Ctrl＋クリックでPowerAppsを開く';
             a.textContent = text;
             a.addEventListener('mousedown', ev => {
-              if (ev.ctrlKey || ev.metaKey) ev.stopPropagation(); // Ctrl＋クリック：td選択/ドラッグを開始させない
+              if (ev.ctrlKey || ev.metaKey) ev.stopPropagation();
             });
             a.addEventListener('click', ev => {
-              if (ev.ctrlKey || ev.metaKey) ev.stopPropagation(); // Ctrl＋クリック：リンクを開く（td選択を抑制）
-              else ev.preventDefault();                            // 通常クリック：遷移させず選択のみ
+              if (ev.ctrlKey || ev.metaKey) ev.stopPropagation();
+              else ev.preventDefault();
             });
             labelEl.appendChild(a);
           } else {
             labelEl.textContent = text;
           }
           td.appendChild(labelEl);
+
+          // 改修(第8回): 検証完了★をlabelEl内に絶対配置（開始セルと同じz-indexコンテキストになるため選択時も全★が表示される）
+          (resInfo.resMarks || []).forEach(mk => {
+            const mkCol = dateToCol(isoToDate(mk.date));
+            if (mkCol === null || mkCol < col) return;  // 表示範囲外・開始より前はスキップ
+            const mkSpan = document.createElement('span');
+            mkSpan.className   = 'res-mark';
+            mkSpan.textContent = starTextForType(mk.type);
+            // 完了日セル右端を基点に右→左でテキストを配置（★が右端に来る）
+            // 改修(第7回追補5): 列幅ハードコード26→CSS変数に変更（31日フィットで列幅が変動するため）
+            // calc(9999px - 列数 * 実列幅 + 余白3px)
+            mkSpan.style.right = `calc(9999px - ${(mkCol - col + 1)} * var(--date-col-w, 26px) + 3px)`;
+            labelEl.appendChild(mkSpan);
+          });
         }
 
-        // 備考を予約バー右端（終了セル）の外側に表示
         if (resInfo.isEnd && resInfo.remark) {
           const remarkEl = document.createElement('span');
           remarkEl.className   = 'res-remark';
@@ -714,7 +808,6 @@ function renderCalendar() {
           td.appendChild(remarkEl);
         }
 
-        // 改修(第6回): ユーザー編集ロックダウン - 事務局のみリサイズ/移動カーソルを表示
         if (isAdmin) {
           td.addEventListener('mousemove', e => {
             if (_drag.active) return;
@@ -727,20 +820,15 @@ function renderCalendar() {
         }
         td.addEventListener('mousedown', onResMouseDown);
         td.addEventListener('click', () => {
-          // 修正: ドラッグ移動後はクリック選択しない（onDragResUpで再描画済み）
           if (_resMoved) return;
-          // 修正: in-place更新で赤枠を即時表示（renderCalendarでのノード再構築を回避しdblclickを維持）
           onResClick(resInfo.resId);
         });
-        // 改修(第6回): 事務局モードのみダブルクリック編集を有効化
         if (isAdmin) {
           td.addEventListener('dblclick', () => {
-            // 修正: ノードを再構築しないためdblclickが確実に発火する
             openEditDialog(resInfo.resId);
           });
         }
       } else if (!isWkd && isAdmin) {
-        // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ空セル範囲選択（新規登録用）を有効化
         td.addEventListener('mousedown', onCellMouseDown);
         td.addEventListener('mouseover', onCellMouseOver);
       }
@@ -756,13 +844,12 @@ function renderCalendar() {
     return tr;
   }
 
-  // 改修: メイン筐体行を描画（rowIdx は getAllMachines() 上の通算インデックス）
+  // メイン筐体行を描画
   state.machines.forEach((machine, localIdx) => {
     tbody.appendChild(buildMachineRow(machine, localIdx));
   });
 
-  // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ筐体追加行を生成
-  // 改修: 筐体追加行（筐体T の下に「＋」ボタン行を挿入）
+  // 筐体追加行（事務局のみ）
   if (isAdmin) {
     const addTr = document.createElement('tr');
     addTr.className = 'machine-add-row';
@@ -770,14 +857,11 @@ function renderCalendar() {
     const addTdHeader = document.createElement('td');
     addTdHeader.className = 'machine-col';
 
-    // 丸型「＋」ボタン：押下時に筐体名を入力して追加する
     const addBtn = document.createElement('button');
     addBtn.className   = 'machine-add-btn';
     addBtn.textContent = '＋';
     addBtn.title       = '筐体を追加';
     addBtn.addEventListener('click', () => {
-      // 次の筐体名候補（アルファベット連番）をpromptの初期値として算出
-      // 改修(第4回): 南ルーム等で空の場合は既定名なし（旧: '筐体T' は西ルーム専用のため除去）
       const lastMain = state.machines[state.machines.length - 1] || '';
       const lastChar = lastMain.replace('筐体', '');
       const nextCode = lastChar.length === 1
@@ -787,7 +871,6 @@ function renderCalendar() {
       const input    = prompt('追加する筐体名を入力してください', defName);
       if (!input || !input.trim()) return;
       const trimmed = input.trim();
-      // 重複チェック（メイン筐体・予備を含む全名称と照合）
       if (getAllMachines().includes(trimmed)) {
         alert(`「${trimmed}」はすでに存在します。`);
         return;
@@ -799,14 +882,14 @@ function renderCalendar() {
     addTdHeader.appendChild(addBtn);
     addTr.appendChild(addTdHeader);
 
-    // 改修: 筐体追加行の担当者列（空セル：列数を揃えるためのみ、編集不可）
     const addTdAssignee = document.createElement('td');
     addTdAssignee.className = 'assignee-col machine-add-cell';
     addTr.appendChild(addTdAssignee);
 
-    // 追加行の日付列（空セル：weekend色のみ適用、クリック対象外）
-    for (let col = 0; col < days; col++) {
-      const wday  = (firstDay + col) % 7;
+    // 改修(第7回): totalCols 列分の空セルを生成
+    for (let col = 0; col < totalCols; col++) {
+      const d     = viewDates[col];
+      const wday  = d.getDay();
       const isWkd = (wday === 0 || wday === 6);
       const addTd = document.createElement('td');
       addTd.className = 'gantt-cell machine-add-cell' + (isWkd ? ' weekend' : '');
@@ -815,27 +898,32 @@ function renderCalendar() {
     tbody.appendChild(addTr);
   }
 
-  // 改修: 予備区切り行（メイン筐体と予備を視覚的に分離するスペーサ行）
+  // 予備区切り行
   {
     const divTr = document.createElement('tr');
     divTr.className = 'spare-divider-row';
     const divTd = document.createElement('td');
-    divTd.colSpan = days + 2; // 改修: 日付列数 + 機種名列 + 担当者列
+    // 改修(第7回): totalCols + 機種名列 + 担当者列
+    divTd.colSpan = totalCols + 2;
     divTr.appendChild(divTd);
     tbody.appendChild(divTr);
   }
 
-  // 改修: 予備行を描画（rowIdx はメイン筐体数分オフセットした通算インデックス）
+  // 予備行を描画
   state.spares.forEach((machine, localIdx) => {
     const rowIdx = state.machines.length + localIdx;
     tbody.appendChild(buildMachineRow(machine, rowIdx));
   });
+
+  // 改修(第7回追補4): thead・tbody 構築後に呼ぶことで
+  // --date-col-w（31日フィット幅）・テーブル確定幅・--assignee-left（担当者列位置）を
+  // 初回表示から正しく設定する（thead 構築前に呼ぶと machineTh が null になる問題を解消）
+  applyDateColWidth();
 }
 
 // ────────────────────────────────────────────
 // 予約ドラッグ（移動 / リサイズ）
 // ────────────────────────────────────────────
-// 修正: 直前操作がドラッグ移動だったか（didMoveはmouseupで解消されるため別途保持）
 let _resMoved = false;
 const _drag = {
   active:       false,
@@ -855,10 +943,8 @@ const _drag = {
 };
 
 function onResMouseDown(e) {
-  // 改修(第6回): ユーザー編集ロックダウン - 使用者モードはドラッグ移動/リサイズ不可
   if (!isAdmin) return;
   if (e.button !== 0) return;
-  // 修正: 新しい操作開始時にドラッグ移動フラグをリセット
   _resMoved = false;
   e.preventDefault();
   e.stopPropagation();
@@ -919,56 +1005,53 @@ function nearestWeekday(date, forward) {
   return d;
 }
 
+// 改修(第7回): viewDates 基準に全面変更・MAX_BIZ_DAYS クランプを撤廃
 function onDragResMove(e) {
   if (!_drag.active) return;
 
   const cell = cellFromPoint(e.clientX, e.clientY);
   if (!cell) return;
 
-  const { year, month } = state;
-  const days      = daysInMonth(year, month);
+  const viewDates  = state.viewDates;
+  const totalCols  = viewDates.length;
   const { mode, resId, origRow, origStart, origEnd, origBiz, clickCol } = _drag;
   const res       = state.reservations[resId];
   if (!res) return;
 
   const curRow = cell.row;
-  const curCol = Math.max(0, Math.min(cell.col, days - 1));
-  const curDate = new Date(year, month - 1, curCol + 1);
+  // 改修(第7回): curCol を viewDates の範囲にクランプ
+  const curCol  = Math.max(0, Math.min(cell.col, totalCols - 1));
+  const curDate = viewDates[curCol];
 
   let newStart = new Date(origStart);
   let newEnd   = new Date(origEnd);
   let newRow   = origRow;
 
   if (mode === 'move') {
-    // 表示月内での元開始列（月前→0, 月後→days）
-    const origDispCol = origStart.getFullYear() === year && origStart.getMonth() === month - 1
-      ? origStart.getDate() - 1 : (origStart < new Date(year, month - 1, 1) ? 0 : days);
+    // 改修(第7回): 元の開始列を dateToCol で求める（範囲外は端点にクランプ）
+    let origDispCol = dateToCol(origStart);
+    if (origDispCol === null) {
+      origDispCol = origStart < state.viewStart ? 0 : totalCols - 1;
+    }
     const offset = clickCol - origDispCol;
-    const nsCol  = Math.max(0, Math.min(curCol - offset, days - 1));
-    let ns = nearestWeekday(new Date(year, month - 1, nsCol + 1), true);
-    // 20営業日クランプ: origBizがMAX超なら既存を尊重
-    const biz  = Math.min(origBiz, MAX_BIZ_DAYS);
-    let ne     = addBizDays(ns, biz);
-    newStart   = ns;
-    newEnd     = ne;
-    newRow     = curRow;
+    const nsCol  = Math.max(0, Math.min(curCol - offset, totalCols - 1));
+    const ns     = nearestWeekday(new Date(viewDates[nsCol]), true);
+    // 改修(第7回): MAX_BIZ_DAYS クランプ撤廃。元の営業日数をそのまま適用
+    const ne     = addBizDays(ns, origBiz);
+    newStart     = ns;
+    newEnd       = ne;
+    newRow       = curRow;
   } else if (mode === 're') {
-    // 右端ドラッグ: 終了日を変更
     let ne = nearestWeekday(curDate, false);
     if (ne < origStart) ne = nearestWeekday(new Date(origStart), true);
-    if (bizDaysBetween(origStart, ne) > MAX_BIZ_DAYS) {
-      ne = addBizDays(origStart, MAX_BIZ_DAYS);
-    }
+    // 改修(第7回): MAX_BIZ_DAYS による再クランプ撤廃
     newStart = new Date(origStart);
     newEnd   = ne;
     newRow   = origRow;
   } else if (mode === 'rs') {
-    // 左端ドラッグ: 開始日を変更
     let ns = nearestWeekday(curDate, true);
     if (ns > origEnd) ns = nearestWeekday(new Date(origEnd), false);
-    if (bizDaysBetween(ns, origEnd) > MAX_BIZ_DAYS) {
-      ns = startForBizDays(origEnd, MAX_BIZ_DAYS);
-    }
+    // 改修(第7回): MAX_BIZ_DAYS による再クランプ撤廃
     newStart = ns;
     newEnd   = new Date(origEnd);
     newRow   = origRow;
@@ -979,22 +1062,17 @@ function onDragResMove(e) {
   _drag.newEnd   = newEnd;
   _drag.newRow   = newRow;
 
-  // プレビュー / ゴーストセルを算出
+  // 改修(第7回): プレビュー/ゴーストセルを viewDates 基準で算出
   const previewCells = new Set();
   const ghostCells   = new Set();
-  const newMachine   = getAllMachines()[newRow]; // 改修: メイン筐体＋予備の全環境名を参照
 
   for (let d = new Date(newStart); d <= newEnd; d.setDate(d.getDate() + 1)) {
-    if (d.getFullYear() === year && d.getMonth() === month - 1) {
-      const c = d.getDate() - 1;
-      if (d.getDay() !== 0 && d.getDay() !== 6) previewCells.add(`${newRow}-${c}`);
-    }
+    const c = dateToCol(d);
+    if (c !== null && d.getDay() !== 0 && d.getDay() !== 6) previewCells.add(`${newRow}-${c}`);
   }
   for (let d = new Date(origStart); d <= origEnd; d.setDate(d.getDate() + 1)) {
-    if (d.getFullYear() === year && d.getMonth() === month - 1) {
-      const c = d.getDate() - 1;
-      if (d.getDay() !== 0 && d.getDay() !== 6) ghostCells.add(`${origRow}-${c}`);
-    }
+    const c = dateToCol(d);
+    if (c !== null && d.getDay() !== 0 && d.getDay() !== 6) ghostCells.add(`${origRow}-${c}`);
   }
 
   _drag.previewCells = previewCells;
@@ -1008,14 +1086,13 @@ function onDragResUp() {
   _drag.active = false;
   document.body.style.cursor = '';
 
-  // 修正: didMove を退避してフラグを保持（didMoveはこの後リセットされるため）
   const moved = _drag.didMove;
   _resMoved   = moved;
 
   if (moved && _drag.newStart && _drag.newEnd) {
     const { resId, newStart, newEnd, newRow } = _drag;
     const res        = state.reservations[resId];
-    const newMachine = getAllMachines()[newRow]; // 改修: メイン筐体＋予備の全環境名を参照
+    const newMachine = getAllMachines()[newRow];
     if (res && !checkOverlap(resId, newMachine, newStart, newEnd)) {
       state.reservations[resId] = {
         ...res,
@@ -1033,8 +1110,6 @@ function onDragResUp() {
   _drag.newEnd       = null;
   _drag.didMove      = false;
 
-  // 修正: ドラッグ移動/リサイズ時のみ再描画する。単純クリック時はノードを差し替えず
-  //       dblclickが同一ノード上で確実に発火できるよう、赤枠選択はin-placeで描画する
   if (moved) {
     updateInfoPanel();
     renderCalendar();
@@ -1056,9 +1131,8 @@ function checkOverlap(excludeResId, machine, ns, ne) {
 // ────────────────────────────────────────────
 let _isDragging        = false;
 let _dragRow           = null;
-// 改修(第1回): 再クリック解除判定用フラグ
-let _reclickCandidate  = false; // mousedown時に当該セルが選択済みだったか
-let _dragMoved         = false; // ドラッグで別列へ移動したか
+let _reclickCandidate  = false;
+let _dragMoved         = false;
 
 function onCellMouseDown(e) {
   if (_drag.active) return;
@@ -1066,7 +1140,6 @@ function onCellMouseDown(e) {
   const row = parseInt(td.dataset.row);
   const col = parseInt(td.dataset.col);
 
-  // 改修(第1回): 再クリック解除判定 ─ 選択済みセルかを先に退避し、ドラッグ移動フラグをリセット
   _reclickCandidate = state.selectedCells.has(`${row}-${col}`);
   _dragMoved        = false;
 
@@ -1081,6 +1154,7 @@ function onCellMouseDown(e) {
   renderCalendar();
 }
 
+// 改修(第7回): 曜日判定を viewDates[c] から取得
 function onCellMouseOver(e) {
   if (!_isDragging || !state.anchorCell) return;
   const td  = e.currentTarget;
@@ -1088,24 +1162,22 @@ function onCellMouseOver(e) {
   const col = parseInt(td.dataset.col);
   if (row !== _dragRow) return;
 
-  // 改修(第1回): アンカーから別の列へ移動したらドラッグ移動フラグをセット（再クリック解除の誤発火防止）
   if (col !== state.anchorCell.col) _dragMoved = true;
 
-  const anchor   = state.anchorCell;
-  const minCol   = Math.min(anchor.col, col);
-  const maxCol   = Math.max(anchor.col, col);
-  const firstDay = new Date(state.year, state.month - 1, 1).getDay();
+  const anchor = state.anchorCell;
+  const minCol = Math.min(anchor.col, col);
+  const maxCol = Math.max(anchor.col, col);
 
   state.selectedCells = new Set();
   for (let c = minCol; c <= maxCol; c++) {
-    const wday = (firstDay + c) % 7;
+    // 改修(第7回): 曜日判定を viewDates[c].getDay() で直接取得
+    const wday = state.viewDates[c].getDay();
     if (wday !== 0 && wday !== 6) state.selectedCells.add(`${row}-${c}`);
   }
   renderCalendar();
 }
 
 document.addEventListener('mouseup', () => {
-  // 改修(第1回): 選択済みセルを移動なしでクリックした場合に選択を全解除（再クリック解除）
   if (_reclickCandidate && !_dragMoved) {
     clearSelection();
     renderCalendar();
@@ -1120,15 +1192,12 @@ function onResClick(resId) {
   state.selectedCells = new Set();
   state.anchorCell    = null;
   updateInfoPanel();
-  // 修正: renderCalendarによるノード再構築を廃しin-placeで赤枠を即時付与（dblclick維持）
   applyResSelectionHighlight(resId);
 }
 
-// 修正: 既存ノードのクラスを付け替えて赤枠選択を即時反映する（renderCalendarを呼ばない）
 function applyResSelectionHighlight(resId) {
   const table = document.getElementById('gantt-table');
   if (!table) return;
-  // 緑枠（空きセル選択）・赤枠（予約選択）をすべて解除してから新たに付与
   table.querySelectorAll('.gantt-cell.selected, .gantt-cell.res-selected')
        .forEach(td => td.classList.remove('selected', 'res-selected'));
   table.querySelectorAll(`.gantt-cell[data-res-id="${resId}"]`)
@@ -1144,11 +1213,8 @@ function updateInfoPanel() {
   const machine   = document.getElementById('info-machine');
   const period    = document.getElementById('info-period');
   const label     = document.getElementById('info-label');
-  const applicant  = document.getElementById('info-applicant'); // 申請者表示要素
-  // 改修(第2回): 編集ボタン撤去に伴い editBtn の参照・表示制御を削除
-  // 改修: 削除ボタン（情報パネルへ移設）
+  const applicant  = document.getElementById('info-applicant');
   const delBtn     = document.getElementById('info-delete-btn');
-  // 改修(第6回): 延長申請・XPX受領ボタン
   const extendBtn  = document.getElementById('info-extend-btn');
   const xpxBtn     = document.getElementById('info-xpx-btn');
 
@@ -1171,20 +1237,17 @@ function updateInfoPanel() {
   }
 
   hint.classList.add('hidden');
-  // 改修(第6回): 削除ボタンは事務局モードのみ表示
   [machine, period, label].forEach(el => el.classList.remove('hidden'));
   if (isAdmin) {
     delBtn.classList.remove('hidden');
   } else {
     delBtn.classList.add('hidden');
   }
-  // 改修(第6回): 延長申請ボタンは使用者モードのみ表示（暫定: 全予約に表示）
   if (!isAdmin) {
     extendBtn.classList.remove('hidden');
   } else {
     extendBtn.classList.add('hidden');
   }
-  // 改修(第6回): XPX受領ボタンは事務局モードかつXPX(FI/EDR)予約のときのみ表示
   const resLegForXpx = _legend.find(l => l.id === res.legendId);
   if (isAdmin && resLegForXpx && isXpxLinkLegend(resLegForXpx.name)) {
     xpxBtn.classList.remove('hidden');
@@ -1193,13 +1256,10 @@ function updateInfoPanel() {
   }
   machine.textContent = `筐体:  ${res.machine}`;
   period.textContent  = `期間:  ${periodStr}  （${biz}営業日）`;
-  // 改修: 状態が通常以外の場合は状態名を優先表示
-  // 改修(第4回): 休日ステータスを情報パネルに表示
   const statusLabel = res.status === 'spare'   ? STATUS_SPARE_TEXT
                     : res.status === 'fault'   ? STATUS_FAULT_TEXT
                     : res.status === 'holiday' ? '休日'
                     : (res.label || '');
-  // 改修(第5回): XPX（FI/EDR）通常予約はラベルをハイパーリンク化（通常クリックで別タブ）
   const resLeg = _legend.find(l => l.id === res.legendId);
   if (resLeg && isXpxLinkLegend(resLeg.name) && res.status === 'normal' && res.label) {
     label.textContent = 'ラベル:  ';
@@ -1214,38 +1274,96 @@ function updateInfoPanel() {
     label.textContent = `ラベル:  ${statusLabel}`;
   }
 
-  // 申請者：値がある場合のみパネルに表示
   if (res.applicant) {
     applicant.textContent = `申請者:  ${res.applicant}`;
     applicant.classList.remove('hidden');
   } else {
     applicant.classList.add('hidden');
   }
-
 }
 
 // ────────────────────────────────────────────
-// 月ナビ
+// 改修(第7回): 月ナビ → スクロール移動化
 // ────────────────────────────────────────────
+
+// sticky固定列の合計幅を返す
+function getStickyWidth(wrapper) {
+  const mc = wrapper.querySelector('th.machine-col');
+  const ac = wrapper.querySelector('th.assignee-col');
+  return (mc ? mc.offsetWidth : 170) + (ac ? ac.offsetWidth : 80);
+}
+
+// 指定日付の列が gantt-wrapper の左端（sticky列の右側）に来るよう水平スクロール
+function scrollToDate(date) {
+  const col = dateToCol(new Date(date.getFullYear(), date.getMonth(), date.getDate()));
+  if (col === null) return;
+  const wrapper = document.querySelector('.gantt-wrapper');
+  if (!wrapper) return;
+  const th = wrapper.querySelector(`thead th[data-col="${col}"]`);
+  if (!th) return;
+  const thAbsLeft  = th.getBoundingClientRect().left + wrapper.scrollLeft - wrapper.getBoundingClientRect().left;
+  const stickyW    = getStickyWidth(wrapper);
+  wrapper.scrollLeft = Math.max(0, thAbsLeft - stickyW);
+}
+
+// 現在スクロール位置でsticky列の右端に最も近い列インデックスを返す
+function getVisibleStartCol() {
+  const wrapper = document.querySelector('.gantt-wrapper');
+  if (!wrapper) return 0;
+  const stickyW    = getStickyWidth(wrapper);
+  const wrapperLeft = wrapper.getBoundingClientRect().left;
+  const boundary   = wrapperLeft + stickyW;
+  const ths = [...wrapper.querySelectorAll('thead th[data-col]')];
+  for (const th of ths) {
+    if (th.getBoundingClientRect().left >= boundary) return parseInt(th.dataset.col);
+  }
+  return state.viewDates.length > 0 ? state.viewDates.length - 1 : 0;
+}
+
+// 改修(第7回追補): 日付列幅を動的に計算して CSS変数と colgroup に反映する
+// ウィンドウ幅 / 担当者列表示状態が変わるたびに呼び出す
+function applyDateColWidth() {
+  const table   = document.getElementById('gantt-table');
+  const wrapper = document.querySelector('.gantt-wrapper');
+  if (!table || !wrapper) return;
+  const assigneeW = table.classList.contains('assignee-hidden') ? 0 : 80;
+  const machineW  = 170;
+  const avail     = wrapper.clientWidth - machineW - assigneeW;
+  const w         = Math.max(DATE_COL_MIN, Math.floor(avail / 31));
+  // CSS変数に設定（th.date-col / td.gantt-cell が参照）
+  table.style.setProperty('--date-col-w', w + 'px');
+  // colgroup の col.col-date 幅も同期更新
+  table.querySelectorAll('col.col-date').forEach(col => { col.style.width = w + 'px'; });
+  // 改修(第7回追補4): table-layout:fixed は確定幅がないと自動レイアウトにフォールバックする
+  // テーブル全体の px 幅を設定して fixed レイアウトを発火させる
+  // これにより colgroup 幅が厳密に反映され、日付ヘッダと予約バーの列ズレが解消する
+  const totalDateCols = state.viewDates ? state.viewDates.length : 0;
+  table.style.width = (machineW + assigneeW + totalDateCols * w) + 'px';
+  // 改修(第7回追補2): 担当者列 sticky left を筐体列の実描画幅に追従させる
+  // ハードコードの left:169px がずれた場合でも隙間なく密着させるための恒久対策
+  const machineTh = table.querySelector('thead th.machine-col');
+  if (machineTh) table.style.setProperty('--assignee-left', machineTh.offsetWidth + 'px');
+}
+
+// 改修(第7回): 前月ボタン → 現在表示月の前の月初へスクロール
 document.getElementById('prev-btn').addEventListener('click', () => {
-  if (state.month === 1) { state.year--; state.month = 12; }
-  else state.month--;
-  clearSelection();
-  renderCalendar();
+  const col = getVisibleStartCol();
+  const d   = state.viewDates[col];
+  if (!d) return;
+  scrollToDate(new Date(d.getFullYear(), d.getMonth() - 1, 1));
 });
+// 改修(第7回): 次月ボタン → 現在表示月の次の月初へスクロール
 document.getElementById('next-btn').addEventListener('click', () => {
-  if (state.month === 12) { state.year++; state.month = 1; }
-  else state.month++;
-  clearSelection();
-  renderCalendar();
+  const col = getVisibleStartCol();
+  const d   = state.viewDates[col];
+  if (!d) return;
+  scrollToDate(new Date(d.getFullYear(), d.getMonth() + 1, 1));
 });
+// 改修(第7回): 今月ボタン → 今日の列へスクロール
 document.getElementById('today-btn').addEventListener('click', () => {
-  const now = new Date();
-  state.year  = now.getFullYear();
-  state.month = now.getMonth() + 1;
-  clearSelection();
-  renderCalendar();
+  scrollToDate(new Date());
 });
+
 function clearSelection() {
   state.selectedCells = new Set();
   state.selectedResId = null;
@@ -1253,9 +1371,6 @@ function clearSelection() {
   updateInfoPanel();
 }
 
-// 改修(第1回): セル外の場所をクリックした場合に選択を解除する
-// 除外対象: .gantt-cell（セル自身が管理）/ #info-panel（編集・削除ボタンが選択状態を使用）
-//          #register-btn（登録ダイアログ起動前に selectedCells を参照）/ #dialog-overlay（ダイアログ操作中）
 document.addEventListener('mousedown', e => {
   if (!state.selectedCells.size && state.selectedResId === null) return;
   const inCell    = e.target.closest('.gantt-cell');
@@ -1266,7 +1381,7 @@ document.addEventListener('mousedown', e => {
     clearSelection();
     renderCalendar();
   }
-}, true); // キャプチャフェーズで処理（他のリスナーより先に評価）
+}, true);
 
 // ────────────────────────────────────────────
 // ページナビ
@@ -1292,11 +1407,13 @@ document.getElementById('room-select').addEventListener('change', e => {
   renderCalendar();
 });
 
-// 改修: 担当者列チェックボックスの change ハンドラ（全ルーム共通・localStorage に保存）
+// 改修: 担当者列チェックボックスの change ハンドラ
 document.getElementById('assignee-visible-chk').addEventListener('change', e => {
   const visible = e.target.checked;
   localStorage.setItem(ASSIGNEE_VISIBLE_KEY, JSON.stringify(visible));
   applyAssigneeVisibility(visible);
+  // 改修(第7回追補): 担当者列の表示/非表示で有効幅が変わるため列幅を再計算
+  applyDateColWidth();
 });
 
 // ────────────────────────────────────────────
@@ -1314,7 +1431,6 @@ function renderLegendPanel() {
     const swatch = document.createElement('div');
     swatch.className = 'legend-swatch';
     swatch.style.background = leg.color;
-    // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ色変更を有効化
     if (isAdmin) {
       swatch.title = '色を変更';
       swatch.addEventListener('click', e => {
@@ -1325,7 +1441,6 @@ function renderLegendPanel() {
     row.appendChild(swatch);
 
     if (isAdmin) {
-      // 事務局: 名称は編集可能なinput
       const nameInput = document.createElement('input');
       nameInput.type      = 'text';
       nameInput.className = 'legend-name-input';
@@ -1336,7 +1451,6 @@ function renderLegendPanel() {
       });
       row.appendChild(nameInput);
 
-      // 削除ボタン（×）
       const delBtn = document.createElement('button');
       delBtn.className   = 'legend-del-btn';
       delBtn.textContent = '×';
@@ -1349,9 +1463,8 @@ function renderLegendPanel() {
       });
       row.appendChild(delBtn);
     } else {
-      // 改修(第6回): ユーザー編集ロックダウン - 使用者は名称を読み取り専用のspanで表示
       const nameSpan = document.createElement('span');
-      nameSpan.className   = 'legend-name-input'; // 既存スタイルを再利用
+      nameSpan.className   = 'legend-name-input';
       nameSpan.textContent = leg.name;
       row.appendChild(nameSpan);
     }
@@ -1359,13 +1472,11 @@ function renderLegendPanel() {
     panel.appendChild(row);
   });
 
-  // 改修(第6回): ユーザー編集ロックダウン - 事務局のみ凡例追加ボタンを表示
   if (isAdmin) {
     const addBtn = document.createElement('button');
     addBtn.className   = 'legend-add-btn';
     addBtn.textContent = '＋ 凡例追加';
     addBtn.addEventListener('click', () => {
-      // 改修: 未使用のパレット色を自動割当（全色使用済みの場合はパレット先頭にフォールバック）
       const color = pickUnusedPaletteColor() || LEGEND_PALETTE[0];
       _legend.push({ id: genLegendId(), name: '新しい凡例', color });
       saveLegend(_legend);
@@ -1383,10 +1494,8 @@ function openColorPicker(anchorEl, legendIdx) {
   const pop = document.createElement('div');
   pop.className = 'color-popover';
 
-  // 改修: 自分以外の凡例が使用中の色集合（重複判定に使用）
   const used = getUsedLegendColors(legendIdx);
 
-  // 改修: 色確定の共通処理（パレット選択・任意色入力の両方から呼ぶ）
   function applyLegendColor(hex) {
     _legend[legendIdx].color = hex;
     saveLegend(_legend);
@@ -1403,7 +1512,6 @@ function openColorPicker(anchorEl, legendIdx) {
     const isUsed = used.has(hex.toLowerCase());
     if (isSelf) sw.classList.add('palette-selected');
     if (isUsed) {
-      // 改修: 他凡例が使用中の色は選択不可（グレーアウト＋クリック無効）
       sw.classList.add('palette-used');
       sw.title = hex + '（使用中）';
     } else {
@@ -1413,7 +1521,6 @@ function openColorPicker(anchorEl, legendIdx) {
     pop.appendChild(sw);
   });
 
-  // 改修: パレット枯渇に備えた任意色入力（ブラウザ標準カラーピッカー）
   const custom = document.createElement('input');
   custom.type  = 'color';
   custom.className = 'palette-custom';
@@ -1422,7 +1529,6 @@ function openColorPicker(anchorEl, legendIdx) {
   custom.addEventListener('click', e => e.stopPropagation());
   custom.addEventListener('change', e => {
     const hex = e.target.value;
-    // 改修: 他凡例と重複する色は拒否
     if (used.has(hex.toLowerCase())) {
       alert('その色は他の凡例で使用中です。別の色を選んでください。');
       return;
@@ -1446,26 +1552,20 @@ function closeColorPicker() {
 // 登録・編集ダイアログ
 // ────────────────────────────────────────────
 document.getElementById('register-btn').addEventListener('click', openRegisterDialog);
-// 改修(第2回): 編集ボタン撤去に伴いクリックリスナー削除（編集はダブルクリックのみ）
 
-// 改修: 削除ボタンを情報パネルへ移設 ─ 削除ボタンクリックで選択中予約を削除
 document.getElementById('info-delete-btn').addEventListener('click', () => {
   if (state.selectedResId !== null) deleteReservation(state.selectedResId);
 });
 
-// 改修(第6回): 延長申請ボタン → 延長ダイアログを表示（ガワのみ）
 document.getElementById('info-extend-btn').addEventListener('click', () => {
   const overlay = document.getElementById('extend-overlay');
-  // 選択中予約の終了日を延長後終了日の初期値として設定
   const res = state.reservations[state.selectedResId];
   if (res) document.getElementById('ext-end').value = res.end.split('T')[0];
   document.getElementById('ext-reason').value = '';
   overlay.classList.remove('hidden');
 });
 
-// 改修(第6回): 延長申請ダイアログの申請・キャンセル処理（ガワのみ・実処理未実装）
 document.getElementById('ext-ok').addEventListener('click', () => {
-  // 延長理由は必須入力
   if (!document.getElementById('ext-reason').value.trim()) {
     alert('延長理由を入力してください');
     return;
@@ -1477,22 +1577,19 @@ document.getElementById('ext-cancel').addEventListener('click', () => {
   document.getElementById('extend-overlay').classList.add('hidden');
 });
 
-// 改修(第6回): XPX受領ボタン（ガワのみ・実処理未実装）
 document.getElementById('info-xpx-btn').addEventListener('click', () => {
   alert('XPX リスト登録処理は未実装です');
 });
 
-// 改修: 削除処理を共通関数として切り出し（編集ダイアログ内から情報パネルへ移設に伴い整理）
 function deleteReservation(resId) {
   if (!confirm('この予約を削除しますか？')) return;
   state.reservations.splice(resId, 1);
   saveReservations(state.reservations);
-  clearSelection(); // 選択解除（selectedResId = null + updateInfoPanel）
+  clearSelection();
   renderCalendar();
 }
 
 function openRegisterDialog() {
-  // 改修(第6回): ユーザー編集ロックダウン - 使用者モードは登録不可（二重防衛）
   if (!isAdmin) return;
   const sel = state.selectedCells;
   if (!sel.size) {
@@ -1502,23 +1599,26 @@ function openRegisterDialog() {
   const rows = [...sel].map(k => parseInt(k.split('-')[0]));
   if (new Set(rows).size !== 1) return;
 
-  const row      = rows[0];
-  const cols     = [...sel].map(k => parseInt(k.split('-')[1]));
-  const { year, month } = state;
-  const startDay = Math.min(...cols) + 1;
-  const endDay   = Math.max(...cols) + 1;
-  const defLeg   = _legend.length > 0 ? _legend[0].id : '';
+  const row    = rows[0];
+  const cols   = [...sel].map(k => parseInt(k.split('-')[1]));
+  const minCol = Math.min(...cols);
+  const maxCol = Math.max(...cols);
+  // 改修(第7回): viewDates から開始・終了日を取得
+  const startDate = state.viewDates[minCol];
+  const endDate   = state.viewDates[maxCol];
+  const defLeg    = _legend.length > 0 ? _legend[0].id : '';
 
   showDialog('予約登録', {
-    machine:   getAllMachines()[row], // 改修: メイン筐体＋予備の全環境名を参照
-    startIso:  `${year}-${String(month).padStart(2,'0')}-${String(startDay).padStart(2,'0')}`,
-    endIso:    `${year}-${String(month).padStart(2,'0')}-${String(endDay).padStart(2,'0')}`,
+    machine:   getAllMachines()[row],
+    startIso:  dateToIso(startDate),
+    endIso:    dateToIso(endDate),
     label:     '',
     legendId:  defLeg,
-    applicant: '', // 申請者（新規登録時は空）
-    remark:    '', // 備考（新規登録時は空）
-    status:    'normal', // 改修: 新規登録はデフォルトで通常状態
-    room:      state.currentRoom, // 改修(第4回): 現在選択中のルームを自動設定
+    applicant: '',
+    remark:    '',
+    status:    'normal',
+    room:      state.currentRoom,
+    marks:     [],              // 改修(第8回): 検証完了日★初期値（空）
   }, 'register');
 }
 
@@ -1531,14 +1631,15 @@ function openEditDialog(resId) {
     endIso:    res.end.split('T')[0],
     label:     res.label     || '',
     legendId:  res.legendId  || (_legend.length > 0 ? _legend[0].id : ''),
-    applicant: res.applicant || '', // 既存の申請者（未設定の場合は空文字）
-    remark:    res.remark    || '', // 既存の備考（未設定の場合は空文字）
-    status:    res.status    || 'normal', // 改修: 既存の状態（未設定の場合は通常）
-    room:      res.room      || 'west',   // 改修(第4回): 既存のルーム（未設定の場合は西HILSルーム）
+    applicant: res.applicant || '',
+    remark:    res.remark    || '',
+    status:    res.status    || 'normal',
+    room:      res.room      || 'west',
+    marks:     res.marks     || [],     // 改修(第8回): 検証完了日★を復元
   }, 'edit', resId);
 }
 
-// 改修(第5回): 分類別の分割入力欄定義（値を "_" 結合してラベル自動生成）
+// 改修(第5回): 分類別の分割入力欄定義
 const LABEL_FIELD_SETS = [
   { match: n => n.includes('FI/EDR'), prefix: '', parts: [
     { key: 'no',   label: '予約管理No', placeholder: '例）001',       required: true  },
@@ -1555,15 +1656,12 @@ const LABEL_FIELD_SETS = [
     { key: 'code', label: '機種コード', placeholder: '例）ABCコード', required: true },
   ]},
 ];
-// 空欄（任意）は除外して "_" 結合、prefix は先頭に直接連結
 function getLabelFieldSet(name) { return LABEL_FIELD_SETS.find(s => s.match(name)) || null; }
 function composeLabel(fieldSet, values) {
   const joined = fieldSet.parts.map(p => (values[p.key] || '').trim()).filter(v => v !== '').join('_');
   return joined === '' ? '' : (fieldSet.prefix || '') + joined;
 }
-// 改修(第5回): XPXラベルのリンク先（暫定。将来はリストIDからPowerApps URLを生成）
 const XPX_LINK_URL = 'https://globalhonda.sharepoint.com/sites/jphgt110776/Lists/List/AllItems.aspx';
-// 改修(第5回): XPXリンク表示対象判定（XPX（FI/EDR）のみ、XPX構築は対象外）
 function isXpxLinkLegend(name) { return name.includes('FI/EDR'); }
 
 function buildLegendSelect(selectedId) {
@@ -1581,7 +1679,6 @@ function showDialog(title, data, mode, resId = null) {
 
   titleEl.textContent = title;
   okBtn.textContent   = mode === 'register' ? '登録' : '保存';
-  // 改修: 削除ボタンを情報パネルへ移設したため、ここでの削除ボタン制御は廃止
 
   bodyEl.innerHTML = `
     <div class="form-row">
@@ -1616,7 +1713,6 @@ function showDialog(title, data, mode, resId = null) {
       <label>終了日:</label>
       <input type="date" id="f-end" value="${data.endIso}">
     </div>
-    <!-- 改修(第2回): 分類を上・ラベルを下に入れ替え -->
     <div id="form-row-legend" class="form-row">
       <label>分類:</label>
       <div class="legend-select-wrap">
@@ -1624,7 +1720,6 @@ function showDialog(title, data, mode, resId = null) {
         <select id="f-legend">${buildLegendSelect(data.legendId)}</select>
       </div>
     </div>
-    <!-- 改修(第5回): 分割入力欄コンテナ（分類に応じて動的生成） -->
     <div id="f-label-fields"></div>
     <div id="form-row-label" class="form-row">
       <label>ラベル:</label>
@@ -1636,12 +1731,27 @@ function showDialog(title, data, mode, resId = null) {
     </div>
     <div id="form-row-remark" class="form-row">
       <label>備考:</label>
-      <!-- 改修(第2回): ☆を datalist候補・placeholder から削除（★のみ残す） -->
       <input type="text" id="f-remark" list="remark-options"
-             value="${data.remark || ''}" placeholder="★ / 自由記入">
+             value="${data.remark || ''}" placeholder="自由記入">
       <datalist id="remark-options">
         <option value="★">
       </datalist>
+    </div>
+    <div id="form-row-marks" class="form-marks-group">
+      <div class="form-marks-title">検証完了日（★）</div>
+      ${VERIFY_MARKS.map(v => {
+        const existing = (data.marks || []).find(mk => mk.type === v.key);
+        const checked  = existing ? ' checked' : '';
+        const dateVal  = existing ? existing.date : (data.endIso || '');
+        const disAttr  = existing ? '' : ' disabled';
+        return '<div class="form-row form-mark-row" id="form-mark-row-' + v.key + '">' +
+               '<label class="mark-chk-label">' +
+               '<input type="checkbox" id="f-mark-' + v.key + '" class="f-mark-chk" data-key="' + v.key + '"' + checked + '> ' +
+               v.label + '</label>' +
+               '<input type="date" id="f-mark-date-' + v.key + '" class="f-mark-date"' + disAttr + ' value="' + dateVal + '">' +
+               '<span class="mark-star-badge">' + v.star + '</span>' +
+               '</div>';
+      }).join('')}
     </div>
     <div id="f-biz"  class="biz-label"></div>
     <div id="f-warn" class="warn-label hidden"></div>
@@ -1656,7 +1766,6 @@ function showDialog(title, data, mode, resId = null) {
   document.getElementById('f-legend').addEventListener('change', updateSwatch);
   updateSwatch();
 
-  // 改修(第5回): 分類に応じて分割入力欄を出し分け、値からラベルを自動生成
   function updateLabelFields() {
     const leg  = _legend.find(l => l.id === document.getElementById('f-legend').value);
     const name = leg ? leg.name : '';
@@ -1664,13 +1773,11 @@ function showDialog(title, data, mode, resId = null) {
     const container  = document.getElementById('f-label-fields');
     const labelInput = document.getElementById('f-label');
     if (!fieldSet) {
-      // その他分類：分割欄なし・ラベルは手入力
       container.innerHTML = '';
       labelInput.readOnly = false;
       labelInput.placeholder = 'プロジェクト名など';
       return;
     }
-    // 分割入力欄を生成
     container.innerHTML = fieldSet.parts.map(p =>
       `<div class="form-row"><label>${p.label}:</label>` +
       `<input type="text" class="f-label-part" data-key="${p.key}" placeholder="${p.placeholder}"></div>`
@@ -1681,7 +1788,6 @@ function showDialog(title, data, mode, resId = null) {
       const values = {};
       container.querySelectorAll('.f-label-part').forEach(inp => { values[inp.dataset.key] = inp.value; });
       const composed = composeLabel(fieldSet, values);
-      // 全欄空の場合は既存ラベル値を維持（編集時の初期値保持）
       if (composed !== '') labelInput.value = composed;
     };
     container.querySelectorAll('.f-label-part').forEach(inp => inp.addEventListener('input', recompose));
@@ -1689,6 +1795,7 @@ function showDialog(title, data, mode, resId = null) {
   document.getElementById('f-legend').addEventListener('change', updateLabelFields);
   updateLabelFields();
 
+  // 改修(第7回): MAX_BIZ_DAYS 上限警告を撤廃。開始日>終了日エラーのみ残す
   function updateBiz() {
     const s    = document.getElementById('f-start').value;
     const e    = document.getElementById('f-end').value;
@@ -1705,24 +1812,18 @@ function showDialog(title, data, mode, resId = null) {
     }
     const biz = bizDaysBetween(ds, de);
     bEl.textContent = `営業日数:  ${biz} 日`;
-    if (biz > MAX_BIZ_DAYS) {
-      wEl.textContent = `⚠ 最大 ${MAX_BIZ_DAYS} 営業日を超えています`;
-      wEl.classList.remove('hidden');
-      okBtn.disabled = true;
-    } else {
-      wEl.classList.add('hidden');
-      okBtn.disabled = false;
-    }
+    // 改修(第7回): 上限警告撤廃
+    wEl.classList.add('hidden');
+    okBtn.disabled = false;
   }
   document.getElementById('f-start').addEventListener('change', updateBiz);
   document.getElementById('f-end').addEventListener('change', updateBiz);
   updateBiz();
 
-  // 改修: 状態変更時に通常以外のフォーム行をグレーアウト・無効化
   function updateStatusFields() {
     const status   = document.getElementById('f-status').value;
     const isNormal = status === 'normal';
-    ['form-row-label', 'form-row-legend', 'form-row-applicant', 'form-row-remark'].forEach(id => {
+    ['form-row-label', 'form-row-legend', 'form-row-applicant', 'form-row-remark', 'form-row-marks'].forEach(id => {
       const row = document.getElementById(id);
       if (row) row.style.opacity = isNormal ? '1' : '0.4';
     });
@@ -1730,28 +1831,57 @@ function showDialog(title, data, mode, resId = null) {
       const el = document.getElementById(id);
       if (el) el.disabled = !isNormal;
     });
+    // 改修(第8回): 通常状態以外では★マーカー入力を無効化
+    VERIFY_MARKS.forEach(v => {
+      const chk = document.getElementById('f-mark-' + v.key);
+      const dt  = document.getElementById('f-mark-date-' + v.key);
+      if (chk) chk.disabled = !isNormal;
+      // 完了日はチェックONかつ通常状態のときのみ有効
+      if (dt)  dt.disabled  = !isNormal || !(chk && chk.checked);
+    });
   }
   document.getElementById('f-status').addEventListener('change', updateStatusFields);
   updateStatusFields();
 
+  // 改修(第8回): チェックボックスON/OFFで完了日入力欄を有効/無効切替
+  VERIFY_MARKS.forEach(v => {
+    const chk = document.getElementById('f-mark-' + v.key);
+    const dt  = document.getElementById('f-mark-date-' + v.key);
+    if (chk && dt) {
+      chk.addEventListener('change', () => {
+        dt.disabled = !chk.checked;
+      });
+    }
+  });
+
   overlay.classList.remove('hidden');
 
   okBtn.onclick = () => {
-    const status   = document.getElementById('f-status').value; // 改修: 状態を取得
+    const status   = document.getElementById('f-status').value;
     const legendId = document.getElementById('f-legend').value;
     const lm       = getLegendMap(_legend);
     const color    = lm[legendId] ? lm[legendId].color : '#fde68a';
+    // 改修(第8回): チェック済み種別の検証完了日を marks 配列に格納
+    const marks = [];
+    VERIFY_MARKS.forEach(v => {
+      const chk = document.getElementById('f-mark-' + v.key);
+      const dt  = document.getElementById('f-mark-date-' + v.key);
+      if (chk && chk.checked && !chk.disabled && dt && dt.value) {
+        marks.push({ type: v.key, date: dt.value });
+      }
+    });
     const resData  = {
-      room:      document.getElementById('f-room').value,     // 改修(第4回): ルーム
+      room:      document.getElementById('f-room').value,
       machine:   document.getElementById('f-machine').value,
       start:     document.getElementById('f-start').value,
       end:       document.getElementById('f-end').value,
       label:     document.getElementById('f-label').value.trim(),
       legendId,
       color,
-      applicant: document.getElementById('f-applicant').value.trim(), // 申請者を保存
-      remark:    document.getElementById('f-remark').value.trim(),    // 備考を保存
-      status,    // 改修: 状態を保存（normal/spare/fault）
+      applicant: document.getElementById('f-applicant').value.trim(),
+      remark:    document.getElementById('f-remark').value.trim(),
+      status,
+      marks,     // 改修(第8回): 検証完了日★配列
     };
     overlay.classList.add('hidden');
     if (mode === 'register') {
@@ -1803,17 +1933,13 @@ function mapLegacyMachine(name) {
 // 初期化
 // ────────────────────────────────────────────
 async function init() {
-  // 改修(第6回): クエリパラメータに応じたユーザー名をヘッダに表示
   document.getElementById('user-name').textContent = isAdmin ? '事務局' : 'ユーザー';
-  // 改修(第6回): ユーザー編集ロックダウン - 使用者モードは「＋登録」ボタンを非表示
   if (!isAdmin) document.getElementById('register-btn').classList.add('hidden');
 
-  // 改修(第4回): ルーム別マップをlocalStorageから読み込み、ビューをバインドする
   state.machinesByRoom  = loadMachines();
   state.sparesByRoom    = loadSpares();
   state.assigneesByRoom = loadAssignees();
   syncRoomViews();
-  // 改修(第4回): ルームプルダウンの初期選択値を currentRoom に合わせる
   document.getElementById('room-select').value = state.currentRoom;
 
   const saved = loadReservations();
@@ -1835,8 +1961,13 @@ async function init() {
     setStatus('');
   }
 
+  // 改修(第7回): 表示期間を初期化してからカレンダーを描画し、今日へ自動スクロール
+  initViewRange();
   renderCalendar();
-  // 改修: 担当者列の表示/非表示を localStorage から復元し、チェックボックスと #gantt-table に反映する
+  scrollToDate(new Date());
+  // 改修(第7回追補): ウィンドウリサイズ時に日付列幅を自動再計算（一度だけ登録）
+  window.addEventListener('resize', applyDateColWidth);
+
   const assigneeVis = loadAssigneeVisible();
   document.getElementById('assignee-visible-chk').checked = assigneeVis;
   applyAssigneeVisibility(assigneeVis);
@@ -1847,11 +1978,7 @@ async function init() {
 init();
 
 // ────────────────────────────────────────────
-// 改修: 画像保存機能（📷保存ボタン）
-//   GUI版 _save_screenshot（app.py:1892）相当。
-//   表と凡例パネルを別々にキャプチャして横連結する方式を採用。
-//   .view-body をまとめて撮ると表(min-width:900px)が凡例領域に
-//   オーバーフローして重なり、凡例が見切れる問題を回避するため。
+// 画像保存機能（📷保存ボタン）
 // ────────────────────────────────────────────
 document.getElementById('capture-btn').addEventListener('click', saveCalendarImage);
 
@@ -1861,11 +1988,9 @@ async function saveCalendarImage() {
   const legendPanel = document.getElementById('legend-panel');
   if (!ganttTable) return;
 
-  // キャプチャ中はボタンを無効化してUI競合を防ぐ
   captureBtn.disabled = true;
   setStatus('画像を生成中...', 'orange');
 
-  // ── 凡例パネルの高さ制約を一時解除（overflow-y:autoで内容がクリップされるため） ──
   const prevLegendOverflowY  = legendPanel ? legendPanel.style.overflowY  : '';
   const prevLegendHeight     = legendPanel ? legendPanel.style.height     : '';
   const prevLegendMaxHeight  = legendPanel ? legendPanel.style.maxHeight  : '';
@@ -1878,16 +2003,11 @@ async function saveCalendarImage() {
   try {
     const OPT = { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false };
 
-    // ① 表（#gantt-table）を単独キャプチャ
-    //    wrapper のスクロールに関係なく表全体が得られる
     const tableCanvas = await html2canvas(ganttTable, OPT);
-
-    // ② 凡例パネルを単独キャプチャ（凡例なしの場合は null）
     const legendCanvas = legendPanel
       ? await html2canvas(legendPanel, OPT)
       : null;
 
-    // ③ 合成 canvas を作成（左:表 / 右:凡例、上端揃え）
     const totalW = tableCanvas.width + (legendCanvas ? legendCanvas.width : 0);
     const totalH = Math.max(tableCanvas.height, legendCanvas ? legendCanvas.height : 0);
     const merged = document.createElement('canvas');
@@ -1899,13 +2019,11 @@ async function saveCalendarImage() {
     ctx.drawImage(tableCanvas, 0, 0);
     if (legendCanvas) ctx.drawImage(legendCanvas, tableCanvas.width, 0);
 
-    // 改修(第4回): 保存ファイル名に現在ルーム名を付与（例: 予約表_西HILS_20260702.png）
     const now = new Date();
     const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     const roomLabel = state.currentRoom === 'west' ? '西HILS' : '南HILS';
     const filename = `予約表_${roomLabel}_${ymd}.png`;
 
-    // 合成 Canvas → Blob → ダウンロード
     merged.toBlob(blob => {
       const url = URL.createObjectURL(blob);
       const a   = document.createElement('a');
@@ -1914,7 +2032,6 @@ async function saveCalendarImage() {
       a.click();
       URL.revokeObjectURL(url);
       setStatus(`保存しました: ${filename}`, '#15803d');
-      // 3秒後にステータスをクリア
       setTimeout(() => setStatus(''), 3000);
     }, 'image/png');
 
@@ -1922,7 +2039,6 @@ async function saveCalendarImage() {
     console.error('画像保存エラー:', err);
     setStatus('画像の保存に失敗しました', '#e05252');
   } finally {
-    // ── 凡例パネルのスタイルを元に戻す（try/finallyで確実に復元） ──
     if (legendPanel) {
       legendPanel.style.overflowY = prevLegendOverflowY;
       legendPanel.style.height    = prevLegendHeight;
