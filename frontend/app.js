@@ -842,14 +842,21 @@ function checkOverlap(excludeResId, machine, ns, ne) {
 // ────────────────────────────────────────────
 // セル範囲ドラッグ（新規選択用）
 // ────────────────────────────────────────────
-let _isDragging = false;
-let _dragRow    = null;
+let _isDragging        = false;
+let _dragRow           = null;
+// 改修(第1回): 再クリック解除判定用フラグ
+let _reclickCandidate  = false; // mousedown時に当該セルが選択済みだったか
+let _dragMoved         = false; // ドラッグで別列へ移動したか
 
 function onCellMouseDown(e) {
   if (_drag.active) return;
   const td  = e.currentTarget;
   const row = parseInt(td.dataset.row);
   const col = parseInt(td.dataset.col);
+
+  // 改修(第1回): 再クリック解除判定 ─ 選択済みセルかを先に退避し、ドラッグ移動フラグをリセット
+  _reclickCandidate = state.selectedCells.has(`${row}-${col}`);
+  _dragMoved        = false;
 
   _isDragging = true;
   _dragRow    = row;
@@ -869,6 +876,9 @@ function onCellMouseOver(e) {
   const col = parseInt(td.dataset.col);
   if (row !== _dragRow) return;
 
+  // 改修(第1回): アンカーから別の列へ移動したらドラッグ移動フラグをセット（再クリック解除の誤発火防止）
+  if (col !== state.anchorCell.col) _dragMoved = true;
+
   const anchor   = state.anchorCell;
   const minCol   = Math.min(anchor.col, col);
   const maxCol   = Math.max(anchor.col, col);
@@ -882,7 +892,16 @@ function onCellMouseOver(e) {
   renderCalendar();
 }
 
-document.addEventListener('mouseup', () => { _isDragging = false; });
+document.addEventListener('mouseup', () => {
+  // 改修(第1回): 選択済みセルを移動なしでクリックした場合に選択を全解除（再クリック解除）
+  if (_reclickCandidate && !_dragMoved) {
+    clearSelection();
+    renderCalendar();
+  }
+  _isDragging       = false;
+  _reclickCandidate = false;
+  _dragMoved        = false;
+});
 
 function onResClick(resId) {
   state.selectedResId = resId;
@@ -972,6 +991,21 @@ function clearSelection() {
   state.anchorCell    = null;
   updateInfoPanel();
 }
+
+// 改修(第1回): セル外の場所をクリックした場合に選択を解除する
+// 除外対象: .gantt-cell（セル自身が管理）/ #info-panel（編集・削除ボタンが選択状態を使用）
+//          #register-btn（登録ダイアログ起動前に selectedCells を参照）/ #dialog-overlay（ダイアログ操作中）
+document.addEventListener('mousedown', e => {
+  if (!state.selectedCells.size && state.selectedResId === null) return;
+  const inCell    = e.target.closest('.gantt-cell');
+  const inInfo    = e.target.closest('#info-panel');
+  const inReg     = e.target.closest('#register-btn');
+  const inDialog  = e.target.closest('#dialog-overlay');
+  if (!inCell && !inInfo && !inReg && !inDialog) {
+    clearSelection();
+    renderCalendar();
+  }
+}, true); // キャプチャフェーズで処理（他のリスナーより先に評価）
 
 // ────────────────────────────────────────────
 // ページナビ

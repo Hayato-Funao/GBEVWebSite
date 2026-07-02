@@ -229,8 +229,11 @@ body {
   background: #c8c8c8;
   cursor: default;
 }
+/* 改修(第1回): セル選択の見た目をExcel近似に変更（塗りつぶし青→透明＋緑罫線） */
 .gantt-table td.gantt-cell.selected {
-  background: #93c5fd !important;
+  background: transparent !important;
+  outline: 2px solid #70AD47 !important;
+  outline-offset: -2px;
 }
 /* 予約選択枠：中間セルは上下のみ（セグメント全体を外枠1本で囲むための分割指定） */
 .gantt-table td.gantt-cell.res-selected {
