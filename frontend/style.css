@@ -193,6 +193,33 @@ body {
   z-index: 5;
 }
 
+/* 改修: 担当者列（筐体列の右隣に sticky 固定） */
+.gantt-table th.assignee-col,
+.gantt-table td.assignee-col {
+  width: 80px;
+  min-width: 70px;
+  background: #e2e8f0;
+  font: 11px 'Meiryo UI', sans-serif;
+  padding: 2px 6px;
+  text-align: left;
+  border-right: 1px solid #94a3b8;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: sticky;
+  left: 169px; /* 改修: border-collapse×sticky の継ぎ目透け対策で1px左へずらして筐体列背景で覆う */
+  z-index: 2;
+  box-shadow: inset 1px 0 0 0 #d1d5db; /* 改修: border-collapse では sticky に追従しないため box-shadow でセルと同じ縦罫線（#d1d5db）を再現 */
+}
+.gantt-table thead th.assignee-col {
+  background: #e2e8f0;
+  border-bottom: 1px solid #94a3b8;
+  height: 44px;
+  font: bold 11px 'Meiryo UI', sans-serif;
+  z-index: 5;
+}
+
 /* 列ヘッダー（日付） */
 .gantt-table th.date-col {
   background: #e2e8f0;
@@ -301,6 +328,20 @@ body {
   color: #1e293b;
   background: #fff;
   outline: none;
+}
+
+/* 改修: 担当者インライン編集用入力フィールド（担当者セルダブルクリック時に表示） */
+.assignee-edit-input {
+  width: 100%;
+  height: 24px;
+  border: 1.5px solid #0ea5e9;  /* 筐体列（紫）と区別できる水色系 */
+  border-radius: 3px;
+  padding: 2px 4px;
+  font: 11px 'Meiryo UI', sans-serif;
+  color: #1e293b;
+  background: #fff;
+  outline: 2px solid #bae6fd;   /* フォーカス枠を視認しやすくする */
+  outline-offset: 1px;
 }
 
 /* ── 選択情報パネル ── */

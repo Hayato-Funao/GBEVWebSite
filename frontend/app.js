@@ -50,8 +50,9 @@ const LEGEND_SEED = [
 
 const LEGEND_STORAGE_KEY  = 'hils_legend_v1';
 const RES_STORAGE_KEY     = 'hils_reservations_v1';
-const MACHINE_STORAGE_KEY = 'hils_machines_v1';     // メイン筐体リストのlocalStorageキー
-const SPARE_STORAGE_KEY   = 'hils_spares_v1';       // 改修: 予備リストのlocalStorageキー
+const MACHINE_STORAGE_KEY  = 'hils_machines_v1';     // メイン筐体リストのlocalStorageキー
+const SPARE_STORAGE_KEY    = 'hils_spares_v1';       // 改修: 予備リストのlocalStorageキー
+const ASSIGNEE_STORAGE_KEY = 'hils_assignees_v1';    // 改修: 担当者マップのlocalStorageキー
 
 // ────────────────────────────────────────────
 // 凡例ストア（localStorage）
@@ -130,6 +131,18 @@ function loadSpares() {
 function saveSpares(spares) {
   localStorage.setItem(SPARE_STORAGE_KEY, JSON.stringify(spares));
 }
+// 改修: 担当者マップをlocalStorageから読み込む（無ければ空オブジェクトを返す）
+function loadAssignees() {
+  try {
+    const raw = localStorage.getItem(ASSIGNEE_STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (_) {}
+  return {};
+}
+// 改修: 担当者マップをlocalStorageに保存する
+function saveAssignees(map) {
+  localStorage.setItem(ASSIGNEE_STORAGE_KEY, JSON.stringify(map));
+}
 
 // ────────────────────────────────────────────
 // 予約ストア（localStorage）
@@ -157,6 +170,7 @@ const state = {
   reservations:  [],
   machines:      [],               // メイン筐体リスト（init()でlocalStorageから読み込み）
   spares:        [],               // 改修: 予備リスト（init()でlocalStorageから読み込み）
+  assignees:     {},               // 改修: 担当者マップ { 筐体名: 担当者名 }（init()でlocalStorageから読み込み）
   selectedCells: new Set(),
   selectedResId: null,
   anchorCell:    null,
@@ -354,6 +368,12 @@ function renderCalendar() {
   thMachine.textContent = '筐体';
   headerRow.appendChild(thMachine);
 
+  // 改修: 担当者列ヘッダを筐体列の右隣に追加
+  const thAssignee = document.createElement('th');
+  thAssignee.className   = 'assignee-col';
+  thAssignee.textContent = '担当者';
+  headerRow.appendChild(thAssignee);
+
   for (let d = 1; d <= days; d++) {
     const wday   = (firstDay + d - 1) % 7;
     const wdayJp = wday === 0 ? 6 : wday - 1;
@@ -423,6 +443,9 @@ function renderCalendar() {
         state.spares.splice(rowIdx - state.machines.length, 1);
         saveSpares(state.spares);
       }
+      // 改修: 削除した筐体の担当者情報もマップから除去して保存
+      delete state.assignees[machine];
+      saveAssignees(state.assignees);
       renderCalendar();
     });
     tdMachine.appendChild(machineDelBtn);
@@ -455,6 +478,12 @@ function renderCalendar() {
             res.machine === oldName ? { ...res, machine: newName } : res
           );
           saveReservations(state.reservations);
+          // 改修: 担当者マップのキーを旧筐体名から新筐体名へ移行
+          if (Object.prototype.hasOwnProperty.call(state.assignees, oldName)) {
+            state.assignees[newName] = state.assignees[oldName];
+            delete state.assignees[oldName];
+            saveAssignees(state.assignees);
+          }
         }
         renderCalendar();
       }
@@ -467,6 +496,46 @@ function renderCalendar() {
     });
 
     tr.appendChild(tdMachine);
+
+    // 改修: 担当者セルを筐体列の右隣に挿入（筐体ごとの担当者を表示・インライン編集）
+    const tdAssignee = document.createElement('td');
+    tdAssignee.className = 'assignee-col';
+    tdAssignee.title     = '担当者（ダブルクリックで編集）';
+    tdAssignee.textContent = state.assignees[machine] || '';
+
+    tdAssignee.addEventListener('dblclick', () => {
+      const currentVal    = state.assignees[machine] || '';
+      const assigneeInput = document.createElement('input');
+      assigneeInput.type      = 'text';
+      assigneeInput.value     = currentVal;
+      assigneeInput.className = 'assignee-edit-input';
+      tdAssignee.textContent  = '';
+      tdAssignee.appendChild(assigneeInput);
+      assigneeInput.focus();
+      assigneeInput.select();
+
+      function commitAssignee() {
+        const newVal = assigneeInput.value.trim();
+        // 改修: 値が変わった場合のみ担当者マップを更新してlocalStorageに保存
+        if (newVal !== currentVal) {
+          if (newVal) {
+            state.assignees[machine] = newVal;
+          } else {
+            delete state.assignees[machine];
+          }
+          saveAssignees(state.assignees);
+        }
+        renderCalendar();
+      }
+
+      assigneeInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter')  { assigneeInput.blur(); }  // Enter で確定
+        if (e.key === 'Escape') { renderCalendar(); }       // Escape でキャンセル
+      });
+      assigneeInput.addEventListener('blur', commitAssignee); // フォーカス外れで確定
+    });
+
+    tr.appendChild(tdAssignee);
 
     for (let col = 0; col < days; col++) {
       const d       = col + 1;
@@ -610,6 +679,11 @@ function renderCalendar() {
     addTdHeader.appendChild(addBtn);
     addTr.appendChild(addTdHeader);
 
+    // 改修: 筐体追加行の担当者列（空セル：列数を揃えるためのみ、編集不可）
+    const addTdAssignee = document.createElement('td');
+    addTdAssignee.className = 'assignee-col machine-add-cell';
+    addTr.appendChild(addTdAssignee);
+
     // 追加行の日付列（空セル：weekend色のみ適用、クリック対象外）
     for (let col = 0; col < days; col++) {
       const wday  = (firstDay + col) % 7;
@@ -626,7 +700,7 @@ function renderCalendar() {
     const divTr = document.createElement('tr');
     divTr.className = 'spare-divider-row';
     const divTd = document.createElement('td');
-    divTd.colSpan = days + 1; // 日付列数 + 機種名列
+    divTd.colSpan = days + 2; // 改修: 日付列数 + 機種名列 + 担当者列
     divTr.appendChild(divTd);
     tbody.appendChild(divTr);
   }
@@ -1433,9 +1507,11 @@ function mapLegacyMachine(name) {
 // ────────────────────────────────────────────
 async function init() {
   // 環境名リストをlocalStorageから読み込む（無ければデフォルト値を使用）
-  state.machines = loadMachines();
+  state.machines  = loadMachines();
   // 改修: 予備リストをlocalStorageから読み込む（無ければデフォルト値を使用）
-  state.spares   = loadSpares();
+  state.spares    = loadSpares();
+  // 改修: 担当者マップをlocalStorageから読み込む（無ければ空オブジェクトを使用）
+  state.assignees = loadAssignees();
 
   const saved = loadReservations();
   if (saved !== null) {
