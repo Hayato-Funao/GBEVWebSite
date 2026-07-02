@@ -219,6 +219,19 @@ body {
   font: bold 11px 'Meiryo UI', sans-serif;
   z-index: 5;
 }
+/* 改修: 担当者列 非表示クラス（チェックボックス連動）
+   #gantt-table に .assignee-hidden を付与することで全行の担当者列を一括で非表示にする */
+.gantt-table.assignee-hidden th.assignee-col,
+.gantt-table.assignee-hidden td.assignee-col { display: none; }
+/* 改修: 担当者列トグルのラベルスタイル */
+.assignee-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 12px 'Meiryo UI', sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
 
 /* 列ヘッダー（日付） */
 .gantt-table th.date-col {

@@ -53,7 +53,8 @@ const LEGEND_STORAGE_KEY  = 'hils_legend_v1';
 const RES_STORAGE_KEY     = 'hils_reservations_v1';
 const MACHINE_STORAGE_KEY  = 'hils_machines_v1';     // メイン筐体リストのlocalStorageキー
 const SPARE_STORAGE_KEY    = 'hils_spares_v1';       // 改修: 予備リストのlocalStorageキー
-const ASSIGNEE_STORAGE_KEY = 'hils_assignees_v1';    // 改修: 担当者マップのlocalStorageキー
+const ASSIGNEE_STORAGE_KEY  = 'hils_assignees_v1';         // 改修: 担当者マップのlocalStorageキー
+const ASSIGNEE_VISIBLE_KEY  = 'hils_assignee_visible_v1';  // 改修: 担当者列の表示/非表示フラグ（全ルーム共通）
 
 // ────────────────────────────────────────────
 // 凡例ストア（localStorage）
@@ -177,6 +178,21 @@ function loadAssignees() {
 // 改修(第4回): ルーム別マップ全体を保存する（引数なし・state.assigneesByRoom を参照）
 function saveAssignees() {
   localStorage.setItem(ASSIGNEE_STORAGE_KEY, JSON.stringify(state.assigneesByRoom));
+}
+// 改修: 担当者列の表示/非表示フラグをlocalStorageから読み込む（未設定・不正時は true で表示）
+function loadAssigneeVisible() {
+  try {
+    const raw = localStorage.getItem(ASSIGNEE_VISIBLE_KEY);
+    if (raw !== null) return JSON.parse(raw) !== false;
+  } catch (_) {}
+  return true; // 初期値: 表示
+}
+// 改修: 担当者列の表示/非表示を #gantt-table の CSS クラスで切り替える
+function applyAssigneeVisibility(visible) {
+  const tbl = document.getElementById('gantt-table');
+  if (!tbl) return;
+  // visible=false のとき assignee-hidden クラスを付与して列を非表示にする
+  tbl.classList.toggle('assignee-hidden', !visible);
 }
 
 // ────────────────────────────────────────────
@@ -1227,6 +1243,13 @@ document.getElementById('room-select').addEventListener('change', e => {
   renderCalendar();
 });
 
+// 改修: 担当者列チェックボックスの change ハンドラ（全ルーム共通・localStorage に保存）
+document.getElementById('assignee-visible-chk').addEventListener('change', e => {
+  const visible = e.target.checked;
+  localStorage.setItem(ASSIGNEE_VISIBLE_KEY, JSON.stringify(visible));
+  applyAssigneeVisibility(visible);
+});
+
 // ────────────────────────────────────────────
 // 凡例パネル
 // ────────────────────────────────────────────
@@ -1712,6 +1735,10 @@ async function init() {
   }
 
   renderCalendar();
+  // 改修: 担当者列の表示/非表示を localStorage から復元し、チェックボックスと #gantt-table に反映する
+  const assigneeVis = loadAssigneeVisible();
+  document.getElementById('assignee-visible-chk').checked = assigneeVis;
+  applyAssigneeVisibility(assigneeVis);
   renderLegendPanel();
   updateInfoPanel();
 }
