@@ -377,8 +377,9 @@ function setStatus(text, color = 'orange') {
 }
 
 // ────────────────────────────────────────────
-// バックエンド API（シードのみ使用）
+// バックエンド API
 // ────────────────────────────────────────────
+// 改修(SP連携マージ): エラー時は null を返して init() でlocalStorageフォールバック判定に使用
 async function fetchReservations() {
   try {
     const res = await fetch('/api/reservations');
@@ -387,8 +388,68 @@ async function fetchReservations() {
     return Array.isArray(data) ? data : [];
   } catch (e) {
     console.error('予約取得失敗:', e);
-    setStatus('データ取得に失敗しました', '#ef4444');
-    return [];
+    setStatus('データ取得に失敗しました（ローカルデータを使用）', '#ef4444');
+    return null;  // 改修(SP連携マージ): エラー時はnullでfetchできなかったことを示す
+  }
+}
+
+// 改修(SP連携マージ): SP列に対応する最小項目 {machine,start,end,label,color,user} を組み立てる
+function buildSpPayload(resData) {
+  const lm    = getLegendMap(_legend);
+  const color = (resData.legendId && lm[resData.legendId]) ? lm[resData.legendId].color : (resData.color || '#fde68a');
+  return {
+    machine: resData.machine,
+    start:   resData.start,
+    end:     resData.end,
+    label:   resData.label || '',
+    color,
+    user:    resData.user  || '',
+  };
+}
+
+// 改修(SP連携マージ): SPにアイテムを新規作成し、返却された SP の Id を返す
+async function apiCreate(resData) {
+  try {
+    const res = await fetch('/api/reservations', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(buildSpPayload(resData)),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    return (json.item && json.item.Id != null) ? json.item.Id : null;
+  } catch (e) {
+    console.error('SP登録失敗:', e);
+    setStatus('SP保存に失敗しました（ローカルには保存済み）', '#ef4444');
+    return null;
+  }
+}
+
+// 改修(SP連携マージ): SP のアイテムを更新する
+async function apiUpdate(spId, resData) {
+  if (spId == null) return;
+  try {
+    const res = await fetch(`/api/reservations/${spId}`, {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(buildSpPayload(resData)),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    console.error('SP更新失敗:', e);
+    setStatus('SP更新に失敗しました（ローカルには保存済み）', '#ef4444');
+  }
+}
+
+// 改修(SP連携マージ): SP のアイテムを削除する
+async function apiDelete(spId) {
+  if (spId == null) return;
+  try {
+    const res = await fetch(`/api/reservations/${spId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    console.error('SP削除失敗:', e);
+    setStatus('SP削除に失敗しました', '#ef4444');
   }
 }
 
@@ -1112,6 +1173,9 @@ function onDragResUp() {
         end:     dateToIso(newEnd),
       };
       saveReservations(state.reservations);
+      // 改修(SP連携マージ): SP を非同期更新（楽観更新。checkOverlapはローカルで保証済み）
+      const spId = state.reservations[resId].spId;
+      if (spId != null) apiUpdate(spId, state.reservations[resId]);
     }
   }
 
@@ -1618,10 +1682,13 @@ document.getElementById('ext-cancel').addEventListener('click', () => {
 function deleteReservation(resId) {
   // 改修(マージ): 成否を返すよう変更（ダイアログ側で成功時のみ閉じるため）
   if (!confirm('この予約を削除しますか？')) return false;
+  // 改修(SP連携マージ): 削除前にspIdを退避してSP削除を非同期実行（楽観更新）
+  const spId = state.reservations[resId] ? state.reservations[resId].spId : null;
   state.reservations.splice(resId, 1);
   saveReservations(state.reservations);
   clearSelection();
   renderCalendar();
+  if (spId != null) apiDelete(spId);
   return true;
 }
 
@@ -1650,6 +1717,7 @@ function openRegisterDialog() {
     endIso:    dateToIso(endDate),
     label:     '',
     legendId:  defLeg,
+    user:      '',             // 改修(SP連携マージ): 借用者
     applicant: '',
     remark:    '',
     status:    'normal',
@@ -1667,6 +1735,7 @@ function openEditDialog(resId) {
     endIso:    res.end.split('T')[0],
     label:     res.label     || '',
     legendId:  res.legendId  || (_legend.length > 0 ? _legend[0].id : ''),
+    user:      res.user      || '',    // 改修(SP連携マージ): 借用者
     applicant: res.applicant || '',
     remark:    res.remark    || '',
     status:    res.status    || 'normal',
@@ -1685,6 +1754,7 @@ function openViewDialog(resId) {
     endIso:    res.end.split('T')[0],
     label:     res.label     || '',
     legendId:  res.legendId  || (_legend.length > 0 ? _legend[0].id : ''),
+    user:      res.user      || '',    // 改修(SP連携マージ): 借用者
     applicant: res.applicant || '',
     remark:    res.remark    || '',
     status:    res.status    || 'normal',
@@ -1792,6 +1862,10 @@ function showDialog(title, data, mode, resId = null) {
       <label>ラベル:</label>
       <input type="text" id="f-label" value="${data.label}" placeholder="プロジェクト名など">
     </div>
+    <div id="form-row-user" class="form-row">
+      <label>借用者:</label>
+      <input type="text" id="f-user" value="${data.user || ''}" placeholder="氏名など">
+    </div>
     <div id="form-row-applicant" class="form-row">
       <label>申請者:</label>
       <input type="text" id="f-applicant" value="${data.applicant || ''}" placeholder="氏名など">
@@ -1893,11 +1967,13 @@ function showDialog(title, data, mode, resId = null) {
   function updateStatusFields() {
     const status   = document.getElementById('f-status').value;
     const isNormal = status === 'normal';
-    ['form-row-label', 'form-row-legend', 'form-row-applicant', 'form-row-remark', 'form-row-marks'].forEach(id => {
+    // 改修(SP連携マージ): form-row-user（借用者行）を追加
+    ['form-row-label', 'form-row-legend', 'form-row-user', 'form-row-applicant', 'form-row-remark', 'form-row-marks'].forEach(id => {
       const row = document.getElementById(id);
       if (row) row.style.opacity = isNormal ? '1' : '0.4';
     });
-    ['f-label', 'f-legend', 'f-applicant', 'f-remark'].forEach(id => {
+    // 改修(SP連携マージ): f-user（借用者入力）を追加
+    ['f-label', 'f-legend', 'f-user', 'f-applicant', 'f-remark'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.disabled = !isNormal;
     });
@@ -1956,7 +2032,7 @@ function showDialog(title, data, mode, resId = null) {
     cancelBtn.textContent = 'キャンセル';
   }
 
-  okBtn.onclick = () => {
+  okBtn.onclick = async () => {  // 改修(SP連携マージ): SP API を await するため async 化
     const status   = document.getElementById('f-status').value;
     const legendId = document.getElementById('f-legend').value;
     const lm       = getLegendMap(_legend);
@@ -1980,6 +2056,7 @@ function showDialog(title, data, mode, resId = null) {
       label:     document.getElementById('f-label').value.trim(),
       legendId,
       color,
+      user:      document.getElementById('f-user').value.trim(),      // 改修(SP連携マージ): 借用者
       applicant: document.getElementById('f-applicant').value.trim(),
       remark:    document.getElementById('f-remark').value.trim(),
       status,
@@ -1992,13 +2069,34 @@ function showDialog(title, data, mode, resId = null) {
       // 改修(マージ): 登録直後は選択枠(緑)を解除し、登録した予約を赤枠選択状態にする
       state.selectedCells = new Set();
       state.selectedResId = state.reservations.length - 1;
+      saveReservations(state.reservations);
+      renderCalendar();
+      updateInfoPanel();
+      // 改修(SP連携マージ): SPに登録し、返却IdをspIdとして保存（楽観更新）
+      const newSpId = await apiCreate(resData);
+      if (newSpId != null) {
+        state.reservations[state.selectedResId].spId = newSpId;
+        saveReservations(state.reservations);
+      }
     } else if (mode === 'edit' && resId !== null) {
+      // 改修(SP連携マージ): 編集前のspIdを退避してから上書き
+      const prevSpId = state.reservations[resId].spId;
       state.reservations[resId] = { ...state.reservations[resId], ...resData };
       state.selectedResId = resId;
+      saveReservations(state.reservations);
+      renderCalendar();
+      updateInfoPanel();
+      // 改修(SP連携マージ): spIdがあれば更新、なければ新規作成してspIdを保存
+      if (prevSpId != null) {
+        await apiUpdate(prevSpId, state.reservations[resId]);
+      } else {
+        const newSpId = await apiCreate(state.reservations[resId]);
+        if (newSpId != null) {
+          state.reservations[resId].spId = newSpId;
+          saveReservations(state.reservations);
+        }
+      }
     }
-    saveReservations(state.reservations);
-    renderCalendar();
-    updateInfoPanel();
   };
   document.getElementById('dialog-cancel').onclick = () => {
     closeFormPane();
@@ -2053,23 +2151,45 @@ async function init() {
   syncRoomViews();
   document.getElementById('room-select').value = state.currentRoom;
 
-  const saved = loadReservations();
-  if (saved !== null) {
-    state.reservations = saved;
-    const maxId = saved.reduce((m, r) => Math.max(m, r._id || 0), 0);
-    _nextLocalId = maxId + 1;
-    setStatus('');
-  } else {
-    setStatus('データを読み込み中...', 'orange');
-    const raw = await fetchReservations();
-    state.reservations = raw.map((res, idx) => ({
-      ...res,
-      _id:     idx + 1,
-      machine: mapLegacyMachine(res.machine),
-    }));
-    _nextLocalId = state.reservations.length + 1;
+  // 改修(SP連携マージ): 起動毎にSPから取得し、localStorageのリッチ項目（legendId/status/★等）をspIdでマージ
+  setStatus('データを読み込み中...', 'orange');
+  const raw = await fetchReservations();
+  if (raw !== null) {
+    // SP取得成功: localStorageの既存データから spId をキーにリッチ項目を抽出してマージ
+    const savedForMerge = loadReservations() || [];
+    const richMap = {};
+    savedForMerge.forEach(r => { if (r.spId != null) richMap[r.spId] = r; });
+    state.reservations = raw.map((res, idx) => {
+      const ex = richMap[res.id] || {};
+      return {
+        spId:      res.id,
+        _id:       ex._id != null ? ex._id : idx + 1,
+        machine:   mapLegacyMachine(res.machine),
+        start:     res.start,
+        end:       res.end,
+        label:     res.label   || '',
+        color:     res.color   || '#fde68a',
+        user:      res.user    || '',
+        // ローカルにしか保存されていないリッチ項目
+        legendId:  ex.legendId  || (_legend.length > 0 ? _legend[0].id : ''),
+        status:    ex.status    || 'normal',
+        room:      ex.room      || 'west',
+        applicant: ex.applicant || '',
+        remark:    ex.remark    || '',
+        marks:     ex.marks     || [],
+      };
+    });
+    _nextLocalId = state.reservations.reduce((m, r) => Math.max(m, r._id || 0), 0) + 1;
     saveReservations(state.reservations);
     setStatus('');
+  } else {
+    // SP取得失敗: localStorageへフォールバック（fetchReservations内でエラー表示済み）
+    const saved = loadReservations();
+    if (saved !== null) {
+      state.reservations = saved;
+      const maxId = saved.reduce((m, r) => Math.max(m, r._id || 0), 0);
+      _nextLocalId = maxId + 1;
+    }
   }
 
   // 改修(第7回): 表示期間を初期化してからカレンダーを描画し、今日へ自動スクロール

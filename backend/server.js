@@ -18,7 +18,7 @@ function loadEnv() {
 loadEnv();
 
 const PORT        = parseInt(process.env.PORT || '3000');
-const IS_DUMMY    = !process.env.TENANT_ID;
+const IS_DUMMY    = !process.env.SITE_URL;   // 改修(SP連携マージ): Python方式ではSITE_URLで接続有無を判定
 const FRONTEND    = path.join(__dirname, '../frontend');
 
 const MIME_TYPES = {
@@ -104,7 +104,7 @@ const server = http.createServer(async (req, res) => {
   if (method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin':  '*',
-      'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS',
+      'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',  // 改修(SP連携マージ): DELETE追加
       'Access-Control-Allow-Headers': 'Content-Type',
     });
     res.end();
@@ -115,8 +115,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/reservations' && method === 'GET') {
     if (IS_DUMMY) return jsonOk(res, DUMMY_RESERVATIONS);
     try {
-      const token = await sp.getAppToken();
-      const items = await sp.getListItems(token);
+      const items = await sp.getListItems();    // 改修(SP連携マージ): トークン取得はPython内部で完結
       jsonOk(res, items.map(normalizeSpItem));
     } catch (e) {
       console.error('GET /api/reservations:', e.message);
@@ -129,9 +128,8 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/reservations' && method === 'POST') {
     if (IS_DUMMY) return jsonOk(res, { success: true, dummy: true });
     try {
-      const body  = await readBody(req);
-      const token = await sp.getAppToken();
-      const item  = await sp.addListItem(token, toSpFields(body));
+      const body = await readBody(req);
+      const item = await sp.addListItem(null, toSpFields(body));  // 改修(SP連携マージ): トークン引数はPython橋渡し層で不使用
       jsonOk(res, { success: true, item });
     } catch (e) {
       console.error('POST /api/reservations:', e.message);
@@ -140,17 +138,29 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── PATCH /api/reservations/:id ──
-  const patchMatch = pathname.match(/^\/api\/reservations\/(\d+)$/);
-  if (patchMatch && method === 'PATCH') {
+  // ── PATCH / DELETE /api/reservations/:id ──
+  const idMatch = pathname.match(/^\/api\/reservations\/(\d+)$/);  // 改修(SP連携マージ): PATCHとDELETEで共用
+  if (idMatch && method === 'PATCH') {
     if (IS_DUMMY) return jsonOk(res, { success: true, dummy: true });
     try {
-      const body  = await readBody(req);
-      const token = await sp.getAppToken();
-      await sp.updateListItem(token, patchMatch[1], toSpFields(body));
+      const body = await readBody(req);
+      await sp.updateListItem(null, idMatch[1], toSpFields(body));  // 改修(SP連携マージ): トークン引数はPython橋渡し層で不使用
       jsonOk(res, { success: true });
     } catch (e) {
       console.error('PATCH /api/reservations:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(SP連携マージ): DELETE /api/reservations/:id（SPからアイテムを削除する）
+  if (idMatch && method === 'DELETE') {
+    if (IS_DUMMY) return jsonOk(res, { success: true, dummy: true });
+    try {
+      await sp.deleteListItem(null, idMatch[1]);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('DELETE /api/reservations:', e.message);
       jsonErr(res, 500, e.message);
     }
     return;
@@ -176,8 +186,9 @@ function normalizeSpItem(item) {
 function toSpFields(data) {
   const f = {};
   if (data.machine !== undefined) f.Title        = data.machine;
-  if (data.start   !== undefined) f.StartDate    = data.start;
-  if (data.end     !== undefined) f.EndDate      = data.end;
+  // 改修(SP連携マージ): SharePoint DateTime列に合わせてISO形式（T00:00:00Z）で渡す
+  if (data.start   !== undefined) f.StartDate    = data.start ? data.start.split('T')[0] + 'T00:00:00Z' : null;
+  if (data.end     !== undefined) f.EndDate      = data.end   ? data.end.split('T')[0]   + 'T00:00:00Z' : null;
   if (data.label   !== undefined) f.ProjectName  = data.label;
   if (data.color   !== undefined) f.Color        = data.color;
   if (data.user    !== undefined) f.BorrowerName = data.user;
@@ -198,5 +209,6 @@ const DUMMY_RESERVATIONS = [
 
 server.listen(PORT, () => {
   console.log(`HILS予約Webアプリ起動: http://localhost:${PORT}`);
-  if (IS_DUMMY) console.log('  ※ .env未設定のためダミーデータで動作中');
+  if (IS_DUMMY) console.log('  ※ SITE_URL未設定のためダミーデータで動作中');
+  else          console.log(`  SharePoint: ${process.env.SITE_URL}`);
 });

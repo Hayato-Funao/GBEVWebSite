@@ -1,107 +1,77 @@
 'use strict';
-// SharePoint REST API クライアント（Pythonアプリの sp_headers/get_items/update_item 相当）
-const axios = require('axios');
-const { HttpsProxyAgent } = require('https-proxy-agent');
+// SharePoint クライアント
+// 改修(SP連携マージ): axios/Azure AD方式から Python sp_helper.py 子プロセス方式に全面置換
+// （社内プロキシの NTLM 認証を Python requests で透過的に処理するため）
+const { spawn } = require('child_process');
+const path = require('path');
 
-function buildAxiosConfig(token) {
-  const config = {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/json;odata=verbose',
-      'Content-Type': 'application/json;odata=verbose',
-    },
-  };
-  if (process.env.PROXY_URL) {
-    config.httpsAgent = new HttpsProxyAgent(process.env.PROXY_URL);
-    config.proxy = false;
-  }
-  return config;
+const HELPER = path.join(__dirname, 'sp_helper.py');
+
+// ── Python ヘルパー呼び出し ──
+function runHelper(args, timeoutMs = 120000) {
+  return new Promise((resolve, reject) => {
+    const env = {
+      ...process.env,
+      SITE_URL:          process.env.SITE_URL     || '',
+      SP_LIST_PATH:      process.env.SP_LIST_PATH || '',
+      PROXY_URL:         process.env.PROXY_URL    || '',
+      PYTHONIOENCODING:  'utf-8',
+    };
+
+    const proc = spawn('python', [HELPER, ...args], { env, windowsHide: true });
+
+    let stdout = '';
+    let timer  = setTimeout(() => {
+      proc.kill();
+      reject(new Error('Python タイムアウト'));
+    }, timeoutMs);
+
+    proc.stdout.on('data', d => { stdout += d.toString(); });
+    proc.stderr.on('data', d => { process.stdout.write(d); }); // デバイスコードのメッセージを転送
+
+    proc.on('close', () => {
+      clearTimeout(timer);
+      const out = stdout.trim();
+      if (!out) return reject(new Error('Python から出力なし'));
+      try {
+        const result = JSON.parse(out);
+        if (result.error) return reject(new Error(result.error));
+        resolve(result);
+      } catch (_) {
+        reject(new Error('Python 出力のパース失敗: ' + out.slice(0, 200)));
+      }
+    });
+
+    proc.on('error', reject);
+  });
 }
 
-function buildProxyConfig() {
-  const config = {};
-  if (process.env.PROXY_URL) {
-    config.httpsAgent = new HttpsProxyAgent(process.env.PROXY_URL);
-    config.proxy = false;
-  }
-  return config;
-}
-
-// トークン取得（client_credentials フロー）
+// トークン取得（デバイスコードフロー含む）
 async function getAppToken() {
-  const { TENANT_ID, CLIENT_ID, CLIENT_SECRET, SITE_URL } = process.env;
-  const siteHost = new URL(SITE_URL).hostname;
-  const scope = `https://${siteHost}/.default`;
-
-  const res = await axios.post(
-    `https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`,
-    new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      scope,
-    }),
-    {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      ...buildProxyConfig(),
-    }
-  );
-
-  if (!res.data.access_token) {
-    throw new Error('トークン取得失敗: ' + JSON.stringify(res.data));
-  }
-  return res.data.access_token;
+  const result = await runHelper(['get_token'], 300000); // 5分（デバイスコード入力待ち）
+  return result.token;
 }
 
 // リストアイテム一覧取得
-async function getListItems(token, filterQuery = null) {
-  const { SITE_URL, SP_LIST_PATH } = process.env;
-  const siteUrl = SITE_URL.replace(/\/$/, '');
-  let url = `${siteUrl}/_api/web/GetList('${SP_LIST_PATH}')/items?$top=5000`;
-  if (filterQuery) url += `&$filter=${encodeURIComponent(filterQuery)}`;
-
-  const res = await axios.get(url, buildAxiosConfig(token));
-  return res.data.d.results;
-}
-
-// エンティティタイプ名を取得（書き込み操作に必要）
-async function getEntityTypeName(token) {
-  const { SITE_URL, SP_LIST_PATH } = process.env;
-  const siteUrl = SITE_URL.replace(/\/$/, '');
-  const url = `${siteUrl}/_api/web/GetList('${SP_LIST_PATH}')?$select=ListItemEntityTypeFullName`;
-  const res = await axios.get(url, buildAxiosConfig(token));
-  return res.data.d.ListItemEntityTypeFullName;
+async function getListItems() {
+  const result = await runHelper(['get_items']);
+  return result.items;
 }
 
 // アイテム新規作成
-async function addListItem(token, fields) {
-  const { SITE_URL, SP_LIST_PATH } = process.env;
-  const siteUrl = SITE_URL.replace(/\/$/, '');
-  const entityType = await getEntityTypeName(token);
-
-  const body = { __metadata: { type: entityType }, ...fields };
-  const url = `${siteUrl}/_api/web/GetList('${SP_LIST_PATH}')/items`;
-  const res = await axios.post(url, body, buildAxiosConfig(token));
-  return res.data.d;
+async function addListItem(_token, fields) {
+  const result = await runHelper(['add_item', JSON.stringify(fields)]);
+  return result.item;
 }
 
-// アイテム更新（MERGE）
-async function updateListItem(token, itemId, fields) {
-  const { SITE_URL, SP_LIST_PATH } = process.env;
-  const siteUrl = SITE_URL.replace(/\/$/, '');
-  const entityType = await getEntityTypeName(token);
-
-  const body = { __metadata: { type: entityType }, ...fields };
-  const url = `${siteUrl}/_api/web/GetList('${SP_LIST_PATH}')/items(${itemId})`;
-  const config = {
-    ...buildAxiosConfig(token),
-    headers: {
-      ...buildAxiosConfig(token).headers,
-      'IF-MATCH': '*',
-      'X-HTTP-Method': 'MERGE',
-    },
-  };
-  await axios.post(url, body, config);
+// アイテム更新
+async function updateListItem(_token, itemId, fields) {
+  await runHelper(['update_item', String(itemId), JSON.stringify(fields)]);
 }
 
-module.exports = { getAppToken, getListItems, addListItem, updateListItem };
+// アイテム削除
+async function deleteListItem(_token, itemId) {
+  await runHelper(['delete_item', String(itemId)]);
+}
+
+module.exports = { getAppToken, getListItems, addListItem, updateListItem, deleteListItem };

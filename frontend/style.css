@@ -184,7 +184,7 @@ body {
   text-overflow: ellipsis;
   position: sticky;
   left: 0;
-  z-index: 2;
+  z-index: 3; /* 改修: 予約バー選択セル(z-index:2)より前面にして固定列が覆われないよう修正 */
 }
 
 .gantt-table thead th.machine-col {
@@ -213,7 +213,7 @@ body {
   text-overflow: ellipsis;
   position: sticky;
   left: var(--assignee-left, 169px); /* 改修(第7回追補2): 筐体列の実描画幅に追従（applyDateColWidth が CSS変数を設定）。フォールバック169px */
-  z-index: 2;
+  z-index: 3; /* 改修: 予約バー選択セル(z-index:2)より前面にして固定列が覆われないよう修正 */
   box-shadow: inset 1px 0 0 0 #d1d5db; /* 改修: border-collapse では sticky に追従しないため box-shadow でセルと同じ縦罫線（#d1d5db）を再現 */
 }
 .gantt-table thead th.assignee-col {
@@ -326,7 +326,8 @@ body {
   box-shadow: inset 0 0 0 3px #ef4444;
 }
 /* 選択時、ラベルを含む先頭セルを他の選択セル(z-index:1)より前面にして全文表示 */
-.gantt-table td.gantt-cell.res-selected.res-edge-left { z-index: 3; }
+/* 改修: z-index:2 に下げて固定列(z-index:3)より背面にし、固定列に覆いかぶさらないよう修正 */
+.gantt-table td.gantt-cell.res-selected.res-edge-left { z-index: 2; }
 .gantt-table td.gantt-cell.today-cell {
   border-left: 2px solid #2563eb;
 }
