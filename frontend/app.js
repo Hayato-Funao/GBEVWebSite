@@ -43,7 +43,7 @@ function markStarText(mk) {
 
 // ────────────────────────────────────────────
 // 改修(第6回): クエリパラメータによる権限判定（見た目のみ・認証ではない）
-//   ?user=admin → 事務局モード（削除・編集・XPX受領ボタンを表示）
+//   ?user=admin → 事務局モード（削除・編集ボタンを表示）
 //   それ以外    → 使用者モード（延長申請ボタンを表示、ダブルクリック編集を無効化）
 // ────────────────────────────────────────────
 const _urlParams = new URLSearchParams(location.search);
@@ -1224,13 +1224,12 @@ function updateInfoPanel() {
   const period    = document.getElementById('info-period');
   const label     = document.getElementById('info-label');
   const applicant  = document.getElementById('info-applicant');
-  const delBtn     = document.getElementById('info-delete-btn');
+  // 改修(マージ): 削除ボタンをダイアログ内へ移設・XPX受領ボタン撤去のため参照を削除
   const extendBtn  = document.getElementById('info-extend-btn');
-  const xpxBtn     = document.getElementById('info-xpx-btn');
 
   if (selectedResId === null || !reservations[selectedResId]) {
     hint.classList.remove('hidden');
-    [machine, period, label, applicant, delBtn, extendBtn, xpxBtn].forEach(el => el.classList.add('hidden'));
+    [machine, period, label, applicant, extendBtn].forEach(el => el.classList.add('hidden'));
     return;
   }
 
@@ -1248,21 +1247,11 @@ function updateInfoPanel() {
 
   hint.classList.add('hidden');
   [machine, period, label].forEach(el => el.classList.remove('hidden'));
-  if (isAdmin) {
-    delBtn.classList.remove('hidden');
-  } else {
-    delBtn.classList.add('hidden');
-  }
+  // 改修(マージ): 削除ボタンはダイアログ内のため情報パネルからは表示制御不要
   if (!isAdmin) {
     extendBtn.classList.remove('hidden');
   } else {
     extendBtn.classList.add('hidden');
-  }
-  const resLegForXpx = _legend.find(l => l.id === res.legendId);
-  if (isAdmin && resLegForXpx && isXpxLinkLegend(resLegForXpx.name)) {
-    xpxBtn.classList.remove('hidden');
-  } else {
-    xpxBtn.classList.add('hidden');
   }
   machine.textContent = `筐体:  ${res.machine}`;
   period.textContent  = `期間:  ${periodStr}  （${biz}営業日）`;
@@ -1563,9 +1552,7 @@ function closeColorPicker() {
 // ────────────────────────────────────────────
 document.getElementById('register-btn').addEventListener('click', openRegisterDialog);
 
-document.getElementById('info-delete-btn').addEventListener('click', () => {
-  if (state.selectedResId !== null) deleteReservation(state.selectedResId);
-});
+// 改修(マージ): info-delete-btn は撤去のためリスナ削除
 
 document.getElementById('info-extend-btn').addEventListener('click', () => {
   const overlay = document.getElementById('extend-overlay');
@@ -1587,16 +1574,16 @@ document.getElementById('ext-cancel').addEventListener('click', () => {
   document.getElementById('extend-overlay').classList.add('hidden');
 });
 
-document.getElementById('info-xpx-btn').addEventListener('click', () => {
-  alert('XPX リスト登録処理は未実装です');
-});
+// 改修(マージ): info-xpx-btn は撤去のためリスナ削除
 
 function deleteReservation(resId) {
-  if (!confirm('この予約を削除しますか？')) return;
+  // 改修(マージ): 成否を返すよう変更（ダイアログ側で成功時のみ閉じるため）
+  if (!confirm('この予約を削除しますか？')) return false;
   state.reservations.splice(resId, 1);
   saveReservations(state.reservations);
   clearSelection();
   renderCalendar();
+  return true;
 }
 
 function openRegisterDialog() {
@@ -1704,9 +1691,12 @@ function showDialog(title, data, mode, resId = null) {
   const titleEl = document.getElementById('dialog-title');
   const bodyEl  = document.getElementById('dialog-body');
   const okBtn   = document.getElementById('dialog-ok');
+  // 改修(マージ): 編集ダイアログ内削除ボタン（編集モード＋管理者のみ表示）
+  const delBtn  = document.getElementById('dialog-delete-btn');
 
   titleEl.textContent = title;
   okBtn.textContent   = mode === 'register' ? '登録' : '保存';
+  delBtn.classList.toggle('hidden', !(isAdmin && mode === 'edit'));
 
   bodyEl.innerHTML = `
     <div class="form-row">
@@ -1945,6 +1935,9 @@ function showDialog(title, data, mode, resId = null) {
     if (mode === 'register') {
       resData._id = genLocalId();
       state.reservations.push(resData);
+      // 改修(マージ): 登録直後は選択枠(緑)を解除し、登録した予約を赤枠選択状態にする
+      state.selectedCells = new Set();
+      state.selectedResId = state.reservations.length - 1;
     } else if (mode === 'edit' && resId !== null) {
       state.reservations[resId] = { ...state.reservations[resId], ...resData };
       state.selectedResId = resId;
@@ -1955,6 +1948,12 @@ function showDialog(title, data, mode, resId = null) {
   };
   document.getElementById('dialog-cancel').onclick = () => {
     overlay.classList.add('hidden');
+  };
+  // 改修(マージ): 編集ダイアログ内削除ボタン（成功時のみダイアログを閉じる）
+  delBtn.onclick = () => {
+    if (mode === 'edit' && resId !== null && deleteReservation(resId)) {
+      overlay.classList.add('hidden');
+    }
   };
 }
 

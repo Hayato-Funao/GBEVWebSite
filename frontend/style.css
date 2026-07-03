@@ -90,17 +90,15 @@ body {
 .btn-register:hover { background: #15803d; }
 .btn-edit     { background: #475569; color: #fff; height: 26px; font-size: 10px; }
 .btn-edit:hover { background: #334155; }
-/* 改修: 予約削除ボタン（情報パネル内の編集ボタン隣へ移設） */
+/* 改修(マージ): 予約削除ボタン（編集ダイアログのフッター左側で使用） */
 .btn-delete       { background: #dc2626; color: #fff; height: 26px; font-size: 10px; }
 .btn-delete:hover { background: #b91c1c; }
 /* 改修: 📷保存ボタン */
 .btn-capture      { background: #7c3aed; color: #fff; }
 .btn-capture:hover { background: #6d28d9; }
-/* 改修(第6回): 延長申請・XPX受領ボタン */
+/* 改修(第6回): 延長申請ボタン */
 .btn-extend       { background: #0891b2; color: #fff; height: 26px; font-size: 10px; }
 .btn-extend:hover { background: #0e7490; }
-.btn-xpx          { background: #2563eb; color: #fff; height: 26px; font-size: 10px; }
-.btn-xpx:hover    { background: #1d4ed8; }
 
 .btn-cancel {
   background: #e2e8f0; color: #475569;
@@ -455,10 +453,18 @@ body {
 
 .dialog-footer {
   display: flex;
-  justify-content: flex-end; /* 改修: 削除ボタンを情報パネルへ移設したためキャンセル・保存を右寄せのみに */
   align-items: center;
-  gap: 8px;
   padding: 8px 24px 16px;
+}
+/* 改修(マージ): 削除ボタンをダイアログ左側に配置。キャンセル/保存と同じ高さに揃える */
+.dialog-footer .btn-delete {
+  border-radius: 8px; padding: 0 16px; height: 36px; font-size: 11px;
+}
+/* 改修(マージ): キャンセル・保存は右揃え（削除ボタンの有無に関わらず右端に固定） */
+.dialog-footer-right {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
 }
 
 /* フォーム行 */
