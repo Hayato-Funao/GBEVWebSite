@@ -90,6 +90,15 @@ body {
 .btn-register:hover { background: #15803d; }
 .btn-edit     { background: #475569; color: #fff; height: 26px; font-size: 10px; }
 .btn-edit:hover { background: #334155; }
+/* 改修: 予約削除ボタン（編集ダイアログのフッター左側で使用） */
+.btn-delete       { background: #dc2626; color: #fff; height: 26px; font-size: 10px; }
+.btn-delete:hover { background: #b91c1c; }
+/* 改修: 📷保存ボタン */
+.btn-capture      { background: #7c3aed; color: #fff; }
+.btn-capture:hover { background: #6d28d9; }
+/* 改修(第6回): 延長申請ボタン */
+.btn-extend       { background: #0891b2; color: #fff; height: 26px; font-size: 10px; }
+.btn-extend:hover { background: #0e7490; }
 
 .btn-cancel {
   background: #e2e8f0; color: #475569;
@@ -152,11 +161,11 @@ body {
   border: 1px solid #cbd5e1;
 }
 
+/* 改修(第7回): 通し表示化のため幅をautoに変更（min-width撤廃・横スクロールで全期間表示） */
 .gantt-table {
   border-collapse: collapse;
   table-layout: fixed;
-  width: 100%;
-  min-width: 900px;
+  width: auto;
 }
 
 /* 行ヘッダー（機種名） */
@@ -181,12 +190,79 @@ body {
 .gantt-table thead th.machine-col {
   background: #e2e8f0;
   border-bottom: 1px solid #94a3b8;
-  height: 44px;
+  /* 改修(第7回): 月見出し行(22px)+日付行(44px)の2行分を占有するため高さを66pxに変更 */
+  height: 66px;
   font: bold 11px 'Meiryo UI', sans-serif;
-  z-index: 3;
+  /* 日付ヘッダー(z-index:4)より上に置き、左上コーナーセルが隠れないようにする */
+  z-index: 5;
 }
 
-/* 列ヘッダー（日付） */
+/* 改修: 担当者列（筐体列の右隣に sticky 固定） */
+.gantt-table th.assignee-col,
+.gantt-table td.assignee-col {
+  width: 80px;
+  min-width: 70px;
+  background: #e2e8f0;
+  font: 11px 'Meiryo UI', sans-serif;
+  padding: 2px 6px;
+  text-align: left;
+  border-right: 1px solid #94a3b8;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: sticky;
+  left: var(--assignee-left, 169px); /* 改修(第7回追補2): 筐体列の実描画幅に追従（applyDateColWidth が CSS変数を設定）。フォールバック169px */
+  z-index: 2;
+  box-shadow: inset 1px 0 0 0 #d1d5db; /* 改修: border-collapse では sticky に追従しないため box-shadow でセルと同じ縦罫線（#d1d5db）を再現 */
+}
+.gantt-table thead th.assignee-col {
+  background: #e2e8f0;
+  border-bottom: 1px solid #94a3b8;
+  /* 改修(第7回): 月見出し行(22px)+日付行(44px)の2行分を占有するため高さを66pxに変更 */
+  height: 66px;
+  font: bold 11px 'Meiryo UI', sans-serif;
+  z-index: 5;
+}
+/* 改修: 担当者列 非表示クラス（チェックボックス連動）
+   #gantt-table に .assignee-hidden を付与することで全行の担当者列を一括で非表示にする */
+.gantt-table.assignee-hidden th.assignee-col,
+.gantt-table.assignee-hidden td.assignee-col { display: none; }
+/* 改修: 担当者列トグルのラベルスタイル */
+.assignee-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 12px 'Meiryo UI', sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* 改修(第7回追補): colgroup の col 幅を CSS変数と同期させるルール
+   JS の applyDateColWidth() がインラインスタイルでも上書きするが、
+   CSS変数フォールバックとして定義しておく */
+.gantt-table col.col-machine  { width: 170px; }
+.gantt-table col.col-assignee { width: 80px; }
+.gantt-table col.col-date     { width: var(--date-col-w, 26px); }
+
+/* 改修(第7回): 月見出し行（通し表示のヘッダ1行目） */
+.gantt-table th.month-col {
+  background: #c7d2e0;
+  font: bold 11px 'Meiryo UI', sans-serif;
+  color: #1e293b;
+  border-right: 2px solid #94a3b8;
+  border-bottom: 1px solid #94a3b8;
+  padding: 2px 0;
+  text-align: center;
+  vertical-align: middle;
+  height: 22px;
+  /* 月見出し行を縦スクロール追従（日付行の下に隠れないよう最上段に固定） */
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+
+/* 列ヘッダー（日付）*/
 .gantt-table th.date-col {
   background: #e2e8f0;
   font: bold 11px 'Meiryo UI', sans-serif;
@@ -198,6 +274,12 @@ body {
   vertical-align: middle;
   line-height: 1.3;
   height: 44px;
+  /* 改修(第7回追補): 日付列幅をCSS変数で管理（JSが31日フィット幅を動的に設定） */
+  width: var(--date-col-w, 26px);
+  /* 改修(第7回): 月見出し行(22px)の下に sticky 固定 */
+  position: sticky;
+  top: 22px;
+  z-index: 4;
 }
 .gantt-table th.date-col.weekend  { background: #d1d5db; color: #64748b; }
 .gantt-table th.date-col.today-hd { background: #bfdbfe; color: #1d4ed8; }
@@ -205,6 +287,8 @@ body {
 /* データセル */
 .gantt-table td.gantt-cell {
   height: 30px;
+  /* 改修(第7回追補): 日付列幅をCSS変数で管理（colgroup と同期） */
+  width: var(--date-col-w, 26px);
   border-right: 1px solid #d1d5db;
   border-bottom: 1px solid #d1d5db;
   background: #fff;
@@ -218,13 +302,31 @@ body {
   background: #c8c8c8;
   cursor: default;
 }
+/* 改修(第1回): セル選択の見た目をExcel近似に変更（塗りつぶし青→透明＋緑罫線） */
 .gantt-table td.gantt-cell.selected {
-  background: #93c5fd !important;
+  background: transparent !important;
+  outline: 2px solid #70AD47 !important;
+  outline-offset: -2px;
 }
+/* 予約選択枠：中間セルは上下のみ（セグメント全体を外枠1本で囲むための分割指定） */
 .gantt-table td.gantt-cell.res-selected {
-  box-shadow: inset 0 0 0 3px #ef4444;
+  box-shadow: inset 0 3px 0 0 #ef4444, inset 0 -3px 0 0 #ef4444;
   z-index: 1;
 }
+/* セグメント左端：上下＋左 */
+.gantt-table td.gantt-cell.res-selected.res-seg-left {
+  box-shadow: inset 0 3px 0 0 #ef4444, inset 0 -3px 0 0 #ef4444, inset 3px 0 0 0 #ef4444;
+}
+/* セグメント右端：上下＋右 */
+.gantt-table td.gantt-cell.res-selected.res-seg-right {
+  box-shadow: inset 0 3px 0 0 #ef4444, inset 0 -3px 0 0 #ef4444, inset -3px 0 0 0 #ef4444;
+}
+/* 単一セル区間（左端かつ右端）：四辺 */
+.gantt-table td.gantt-cell.res-selected.res-seg-left.res-seg-right {
+  box-shadow: inset 0 0 0 3px #ef4444;
+}
+/* 選択時、ラベルを含む先頭セルを他の選択セル(z-index:1)より前面にして全文表示 */
+.gantt-table td.gantt-cell.res-selected.res-edge-left { z-index: 3; }
 .gantt-table td.gantt-cell.today-cell {
   border-left: 2px solid #2563eb;
 }
@@ -243,6 +345,63 @@ body {
   white-space: nowrap;
   pointer-events: none;
   z-index: 1;
+}
+
+/* 改修(第8回): 検証完了★マーカー（res-label内に絶対配置・left はJS側で設定）
+   開始セルのlabelEl内に置くことで選択時も全★が表示される */
+.res-mark {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  font: bold 10px 'Meiryo UI', sans-serif;
+  color: #1e293b;      /* ラベルと同じ黒系 */
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 備考（予約バー終了セル内の右端に表示。left:100%→right:3px に変更して飛び出しを解消） */
+.res-remark {
+  position: absolute;
+  top: 1px;
+  left: auto;  /* 終了日セル外への飛び出しを解消 */
+  right: 3px;  /* 終了日セル内の右端に表示 */
+  height: calc(100% - 2px);
+  display: flex;
+  align-items: center;
+  font: 10px 'Meiryo UI', sans-serif;
+  color: #1e293b;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* 環境名インライン編集用入力フィールド（行ヘッダーダブルクリック時に表示） */
+.machine-edit-input {
+  width: 100%;
+  height: 24px;
+  border: 1.5px solid #4f46e5;
+  border-radius: 3px;
+  padding: 2px 4px;
+  font: 11px 'Meiryo UI', sans-serif;
+  color: #1e293b;
+  background: #fff;
+  outline: none;
+}
+
+/* 改修: 担当者インライン編集用入力フィールド（担当者セルダブルクリック時に表示） */
+.assignee-edit-input {
+  width: 100%;
+  height: 24px;
+  border: 1.5px solid #0ea5e9;  /* 筐体列（紫）と区別できる水色系 */
+  border-radius: 3px;
+  padding: 2px 4px;
+  font: 11px 'Meiryo UI', sans-serif;
+  color: #1e293b;
+  background: #fff;
+  outline: 2px solid #bae6fd;   /* フォーカス枠を視認しやすくする */
+  outline-offset: 1px;
 }
 
 /* ── 選択情報パネル ── */
@@ -294,9 +453,18 @@ body {
 
 .dialog-footer {
   display: flex;
-  justify-content: flex-end;
-  gap: 8px;
+  align-items: center;
   padding: 8px 24px 16px;
+}
+/* 改修: 削除ボタンをダイアログ左側に配置。キャンセル/保存と同じ高さに揃える */
+.dialog-footer .btn-delete {
+  border-radius: 8px; padding: 0 16px; height: 36px; font-size: 11px;
+}
+/* 改修: キャンセル・保存は右揃え（削除ボタンの有無に関わらず右端に固定） */
+.dialog-footer-right {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
 }
 
 /* フォーム行 */
@@ -313,7 +481,8 @@ body {
   flex-shrink: 0;
 }
 .form-row input,
-.form-row select {
+.form-row select,
+.form-row textarea {
   flex: 1;
   height: 32px;
   border: 1.5px solid #e2e8f0;
@@ -322,6 +491,11 @@ body {
   font: 11px 'Meiryo UI', sans-serif;
   color: #1e293b;
   background: #fff;
+}
+/* 改修(第6回): 延長理由入力欄（複数行のため高さを上書き） */
+.form-row textarea {
+  height: auto;
+  resize: vertical;
 }
 .form-row input[type="color"] {
   flex: none;
@@ -334,6 +508,45 @@ body {
 
 .biz-label  { font: bold 12px 'Meiryo UI', sans-serif; color: #4f46e5; margin-top: 6px; }
 .warn-label { font-size: 10px; color: #dc2626; margin-top: 4px; }
+
+/* 改修(第8回): ダイアログ内・検証完了日（★）セクション */
+.form-marks-group {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 8px 10px 4px;
+  margin-bottom: 10px;
+}
+.form-marks-title {
+  font-size: 11px;
+  font-weight: bold;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+/* ★チェックボックス行: label部分（チェックボックス＋テキスト） */
+.mark-chk-label {
+  width: 90px;
+  font-size: 11px;
+  color: #1e293b;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+/* ★バッジ（種別ラベルの右に表示） */
+.mark-star-badge {
+  font: bold 11px 'Meiryo UI', sans-serif;
+  color: #b91c1c;
+  flex-shrink: 0;
+  min-width: 42px;
+}
+/* 改修(第5回): 自動生成ラベル欄（読み取り専用の見た目） */
+#f-label[readonly] { background: #f1f5f9; color: #475569; }
+/* 改修(第5回): ガントバーのXPXラベルリンク（バー文字色を継承し下線のみ付与） */
+/* 不具合修正: 親 .res-label が pointer-events:none のため auto に戻してクリック可能にする */
+.res-label-link { pointer-events: auto; text-decoration: underline; cursor: pointer; color: inherit; }
+/* 改修(第5回): 情報パネルのXPXラベルリンク */
+.info-label-link { color: #4f46e5; text-decoration: underline; }
 
 /* ── ユーティリティ ── */
 .hidden { display: none !important; }
@@ -455,6 +668,28 @@ body {
 }
 .palette-swatch:hover { transform: scale(1.2); border-color: #4f46e5; }
 .palette-swatch.palette-selected { box-shadow: 0 0 0 2px #4f46e5; }
+/* 改修: 他凡例が使用中の色は選択不可を視覚的に明示（グレーアウト＋斜線） */
+.palette-swatch.palette-used {
+  opacity: 0.35;
+  cursor: not-allowed;
+  position: relative;
+}
+.palette-swatch.palette-used:hover { transform: none; border-color: #94a3b8; }
+.palette-swatch.palette-used::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top left, transparent 45%, #888 46%, #888 54%, transparent 55%);
+}
+/* 改修: 任意色入力ボタン（パレット末尾に配置） */
+.palette-custom {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid #94a3b8;
+  border-radius: 3px;
+  cursor: pointer;
+}
 
 /* ダイアログ凡例セレクト */
 .legend-select-wrap {
@@ -482,4 +717,136 @@ body {
   outline: 2px dashed #4f46e5;
   outline-offset: -2px;
   z-index: 2;
+}
+
+/* ── 連続バー化：セル間縦境界線を完全除去 ── */
+/* 右隣が同一予約のセルはborder-rightを除去（transparent は薄線が残るため none を使用） */
+.gantt-table td.gantt-cell.res-cell.res-join-right { border-right: none; }
+
+/* ── 改修: 筐体行ヘッダー（機種名セル）── */
+/* display: flex はやめ table-cell のまま使用（flex化すると行高が縮んで行間に白余白が出るため）。
+   削除ボタン（×）は絶対配置で内包する。overflow:visible にして絶対配置子が clip されないようにする */
+.gantt-table td.machine-col {
+  overflow: visible;    /* 絶対配置の削除ボタンが clip されないよう visible に変更 */
+  vertical-align: middle;
+}
+/* 機種名テキストspan（削除ボタンと重ならないよう右パディングを確保し、省略表示） */
+.machine-name {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 20px; /* 絶対配置の削除ボタン（16px）と重ならないよう右端に余白 */
+}
+/* 改修: 筐体削除ボタン（×）：絶対配置で右端に配置、hover時のみ表示 */
+.machine-del-btn {
+  position: absolute;   /* td.machine-col（position:sticky）を包含ブロックとして使用 */
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #6b7280;
+  font-size: 11px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.gantt-table td.machine-col:hover .machine-del-btn { opacity: 1; }
+.machine-del-btn:hover { background: #fca5a5; color: #dc2626; opacity: 1 !important; }
+
+/* 改修: 筐体追加行（筐体Tの下の「＋」ボタン行）
+   背景色は指定しない → machine-col は .gantt-table td.machine-col (#e2e8f0)、
+   日付セルは .gantt-table td.gantt-cell (#fff) のスタイルをそのまま適用する */
+.machine-add-row td {
+  height: 30px; /* 通常セルと同じ高さ */
+}
+.machine-add-row td.machine-col {
+  background: #e2e8f0; /* 改修: 他の筐体行と同一背景色に統一 */
+  text-align: center;  /* 「＋」ボタンをtable-cell内で中央寄せ（flexなし） */
+  vertical-align: middle;
+}
+/* 丸型「＋」追加ボタン */
+.machine-add-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid #94a3b8;
+  background: #f0f4f8;
+  color: #374151;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.machine-add-btn:hover { background: #e0e7ef; border-color: #4f46e5; color: #4f46e5; }
+/* 追加行のガントセルはクリック・ホバー対象外（背景は gantt-cell / weekend のスタイルに従う） */
+.gantt-table td.machine-add-cell { cursor: default; }
+
+/* 改修: 予備区切り行（メイン筐体と予備の間の空白行：通常セル1行分の高さ・装飾なし） */
+.spare-divider-row td {
+  height: 30px;
+  background: #fff;
+  padding: 0;
+}
+
+/* 改修: 予備日バー（水色塗り） */
+.gantt-table td.gantt-cell.res-spare {
+  background-color: #00B0F0 !important;
+}
+.gantt-table td.gantt-cell.res-spare .res-label {
+  color: #fff;
+  font-weight: bold;
+}
+
+/* 改修: 設備故障バー（グレー斜線パターン） */
+.gantt-table td.gantt-cell.res-fault {
+  background-color: #d9d9d9 !important;
+  background-image: repeating-linear-gradient(
+    45deg,
+    #a0a0a0 0,
+    #a0a0a0 3px,
+    #d9d9d9 3px,
+    #d9d9d9 8px
+  ) !important;
+}
+.gantt-table td.gantt-cell.res-fault .res-label {
+  color: #333;
+  font-weight: bold;
+}
+
+/* 改修(第4回): 休日バー（土日と同じグレー・ラベルなし） */
+.gantt-table td.gantt-cell.res-holiday {
+  background-color: #c8c8c8 !important;
+}
+
+/* 改修(第4回): ルーム切替プルダウン */
+.room-select {
+  margin-left: 12px;
+  padding: 4px 8px;
+  font-size: 13px;
+  border: 1px solid #94a3b8;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #374151;
+  cursor: pointer;
+  vertical-align: middle;
+}
+/* ルームプルダウン（ダイアログ内・無効化状態の見た目） */
+#f-room[disabled] {
+  background: #f1f5f9;
+  color: #374151;
+  cursor: default;
+  opacity: 1;
 }

@@ -77,7 +77,13 @@ function serveStatic(req, res, urlPath) {
       return;
     }
     const ext = path.extname(filePath);
-    res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
+    // 改修(第7回追補2): キャッシュ制御ヘッダを付与してブラウザが古い JS/CSS を再利用しないようにする
+    res.writeHead(200, {
+      'Content-Type':  MIME_TYPES[ext] || 'application/octet-stream',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma':        'no-cache',
+      'Expires':       '0',
+    });
     res.end(data);
   });
 }

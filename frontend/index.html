@@ -35,6 +35,15 @@
         <button id="next-btn"     class="btn btn-nav">次月 ▶</button>
         <button id="today-btn"    class="btn btn-today">今月</button>
         <button id="register-btn" class="btn btn-register">＋ 登録</button>
+        <!-- 改修: 予約表を画像として保存するボタン（GUI版の📷保存機能に相当） -->
+        <button id="capture-btn"  class="btn btn-capture">📷 保存</button>
+        <!-- 改修(第4回): 西/南HILSルーム切替プルダウン（保存ボタンの右隣） -->
+        <select id="room-select" class="room-select">
+          <option value="west">西HILSルーム</option>
+          <option value="south">南HILSルーム</option>
+        </select>
+        <!-- 改修: 担当者列の表示/非表示チェックボックス -->
+        <label class="assignee-toggle"><input type="checkbox" id="assignee-visible-chk" checked> 担当者列</label>
       </div>
       <div class="view-body">
         <div class="gantt-wrapper">
@@ -49,8 +58,11 @@
         <span id="info-hint"    class="info-hint">予約をクリックすると詳細を表示します</span>
         <span id="info-machine" class="info-item hidden"></span>
         <span id="info-period"  class="info-item hidden"></span>
-        <span id="info-label"   class="info-item hidden"></span>
-        <button id="edit-btn"   class="btn btn-edit hidden">編集</button>
+        <span id="info-label"     class="info-item hidden"></span>
+        <span id="info-applicant" class="info-item hidden"></span><!-- 申請者表示欄（予約選択時に下部パネルへ出す） -->
+        <!-- 改修(第2回): 編集ボタンを撤去（ダブルクリックによる編集ダイアログ起動に一本化） -->
+        <!-- 改修(第6回): 使用延長申請ボタン（使用者モード・予約選択時に表示。ガワのみ） -->
+        <button id="info-extend-btn" class="btn btn-extend hidden">延長申請</button>
       </div>
     </div>
 
@@ -75,12 +87,44 @@
     </div>
     <div class="dialog-body" id="dialog-body"></div>
     <div class="dialog-footer">
-      <button id="dialog-cancel" class="btn btn-cancel">キャンセル</button>
-      <button id="dialog-ok"     class="btn btn-ok">登録</button>
+      <!-- 改修: 削除ボタンをダイアログ内左側に配置（編集時のみ表示） -->
+      <button id="dialog-delete-btn" class="btn btn-delete hidden">削除</button>
+      <!-- 改修: キャンセル・保存は右揃え -->
+      <div class="dialog-footer-right">
+        <button id="dialog-cancel" class="btn btn-cancel">キャンセル</button>
+        <button id="dialog-ok"     class="btn btn-ok">登録</button>
+      </div>
     </div>
   </div>
 </div>
 
+<!-- 改修(第6回): 使用延長申請ダイアログ（ガワのみ・実処理未実装） -->
+<div id="extend-overlay" class="dialog-overlay hidden">
+  <div class="dialog-box">
+    <div class="dialog-header">
+      <span>使用延長申請</span>
+    </div>
+    <div class="dialog-body">
+      <div class="form-row">
+        <label>延長後終了日:</label>
+        <input type="date" id="ext-end">
+      </div>
+      <div class="form-row">
+        <label>延長理由:</label>
+        <textarea id="ext-reason" rows="3" placeholder="必須入力"></textarea>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <div class="dialog-footer-right">
+        <button id="ext-cancel" class="btn btn-cancel">キャンセル</button>
+        <button id="ext-ok" class="btn btn-ok">申請</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 改修: html2canvasをローカル同梱（オフライン・社内網でも動作するよう） -->
+<script src="html2canvas.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
