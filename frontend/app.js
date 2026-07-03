@@ -1557,14 +1557,26 @@ document.getElementById('register-btn').addEventListener('click', openRegisterDi
 document.getElementById('info-extend-btn').addEventListener('click', () => {
   const overlay = document.getElementById('extend-overlay');
   const res = state.reservations[state.selectedResId];
-  if (res) document.getElementById('ext-end').value = res.end.split('T')[0];
+  // 改修(第7回): 開始日・終了日の両方を現在値で初期化
+  if (res) {
+    document.getElementById('ext-start').value = res.start.split('T')[0];
+    document.getElementById('ext-end').value   = res.end.split('T')[0];
+  }
   document.getElementById('ext-reason').value = '';
   overlay.classList.remove('hidden');
 });
 
 document.getElementById('ext-ok').addEventListener('click', () => {
-  if (!document.getElementById('ext-reason').value.trim()) {
-    alert('延長理由を入力してください');
+  const startVal  = document.getElementById('ext-start').value;
+  const endVal    = document.getElementById('ext-end').value;
+  const reasonVal = document.getElementById('ext-reason').value.trim();
+  if (!reasonVal) {
+    alert('変更理由を入力してください');
+    return;
+  }
+  // 改修(第7回): 開始日が終了日より後の場合はエラー
+  if (startVal && endVal && startVal > endVal) {
+    alert('変更後終了日が変更後開始日より前です');
     return;
   }
   alert('申請処理は未実装です');

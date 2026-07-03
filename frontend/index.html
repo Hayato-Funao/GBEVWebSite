@@ -62,8 +62,8 @@
         <span id="info-applicant" class="info-item hidden"></span><!-- 申請者表示欄（予約選択時に下部パネルへ出す） -->
         <!-- 改修(第2回): 編集ボタンを撤去（ダブルクリックによる編集ダイアログ起動に一本化） -->
         <!-- 改修(マージ): 削除ボタンを情報パネルから編集ダイアログ内へ移設。XPX受領ボタンは撤去。 -->
-        <!-- 改修(第6回): 使用延長申請ボタン（使用者モード・予約選択時に表示。ガワのみ） -->
-        <button id="info-extend-btn" class="btn btn-extend hidden">延長申請</button>
+        <!-- 改修(第7回): 使用期間変更申請ボタン（使用者モード・予約選択時に表示。ガワのみ） -->
+        <button id="info-extend-btn" class="btn btn-extend hidden">期間変更申請</button>
       </div>
     </div>
 
@@ -99,19 +99,24 @@
   </div>
 </div>
 
-<!-- 改修(第6回): 使用延長申請ダイアログ（ガワのみ・実処理未実装） -->
+<!-- 改修(第7回): 使用期間変更申請ダイアログ（ガワのみ・実処理未実装） -->
 <div id="extend-overlay" class="dialog-overlay hidden">
   <div class="dialog-box">
     <div class="dialog-header">
-      <span>使用延長申請</span>
+      <span>使用期間変更申請</span>
     </div>
     <div class="dialog-body">
+      <!-- 改修(第7回): 開始日入力欄を追加 -->
       <div class="form-row">
-        <label>延長後終了日:</label>
+        <label>変更後開始日:</label>
+        <input type="date" id="ext-start">
+      </div>
+      <div class="form-row">
+        <label>変更後終了日:</label>
         <input type="date" id="ext-end">
       </div>
       <div class="form-row">
-        <label>延長理由:</label>
+        <label>変更理由:</label>
         <textarea id="ext-reason" rows="3" placeholder="必須入力"></textarea>
       </div>
     </div>
