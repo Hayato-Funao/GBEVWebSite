@@ -830,11 +830,14 @@ function renderCalendar() {
           if (_resMoved) return;
           onResClick(resInfo.resId);
         });
-        if (isAdmin) {
-          td.addEventListener('dblclick', () => {
+        // 改修: 事務局は編集ダイアログ、使用者は閲覧専用ダイアログを開く
+        td.addEventListener('dblclick', () => {
+          if (isAdmin) {
             openEditDialog(resInfo.resId);
-          });
-        }
+          } else {
+            openViewDialog(resInfo.resId);
+          }
+        });
       } else if (!isWkd && isAdmin) {
         td.addEventListener('mousedown', onCellMouseDown);
         td.addEventListener('mouseover', onCellMouseOver);
@@ -1646,6 +1649,24 @@ function openEditDialog(resId) {
   }, 'edit', resId);
 }
 
+// 改修: 使用者向け 予約内容の閲覧（編集不可）
+function openViewDialog(resId) {
+  const res = state.reservations[resId];
+  if (!res) return;
+  showDialog('予約内容の確認', {
+    machine:   res.machine,
+    startIso:  res.start.split('T')[0],
+    endIso:    res.end.split('T')[0],
+    label:     res.label     || '',
+    legendId:  res.legendId  || (_legend.length > 0 ? _legend[0].id : ''),
+    applicant: res.applicant || '',
+    remark:    res.remark    || '',
+    status:    res.status    || 'normal',
+    room:      res.room      || 'west',
+    marks:     res.marks     || [],
+  }, 'view', resId);
+}
+
 // 改修(第5回): 分類別の分割入力欄定義
 const LABEL_FIELD_SETS = [
   { match: n => n.includes('FI/EDR'), prefix: '', parts: [
@@ -1878,6 +1899,18 @@ function showDialog(title, data, mode, resId = null) {
   });
 
   overlay.classList.remove('hidden');
+
+  // 改修: 閲覧モードは全入力欄を編集不可・保存ボタン非表示・キャンセルを「閉じる」に変更。
+  //        DOM要素は使い回しのため、通常モードでは明示的に元の状態へ復元する。
+  const cancelBtn = document.getElementById('dialog-cancel');
+  if (mode === 'view') {
+    bodyEl.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
+    okBtn.classList.add('hidden');
+    cancelBtn.textContent = '閉じる';
+  } else {
+    okBtn.classList.remove('hidden');
+    cancelBtn.textContent = 'キャンセル';
+  }
 
   okBtn.onclick = () => {
     const status   = document.getElementById('f-status').value;
