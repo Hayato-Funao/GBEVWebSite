@@ -261,6 +261,7 @@ const state = {
   selectedCells: new Set(),
   selectedResId: null,
   anchorCell:    null,
+  formMode:      null,  // 改修: サイドパネル表示中のモード('register'|'edit'|'view'|null)
 };
 
 // 改修: メイン筐体と予備を結合した全環境名リストを返す（行インデックス計算に使用）
@@ -1185,6 +1186,25 @@ function onCellMouseOver(e) {
     if (wday !== 0 && wday !== 6) state.selectedCells.add(`${row}-${c}`);
   }
   renderCalendar();
+
+  // 改修: 登録フォーム表示中は選択範囲の開始日・終了日をリアルタイムで反映
+  if (state.formMode === 'register') {
+    const startEl = document.getElementById('f-start');
+    const endEl   = document.getElementById('f-end');
+    if (startEl && endEl && state.viewDates[minCol] && state.viewDates[maxCol]) {
+      // ISO日付文字列(YYYY-MM-DD)に変換してフォームへ反映
+      const toIso = d => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      };
+      startEl.value = toIso(state.viewDates[minCol]);
+      endEl.value   = toIso(state.viewDates[maxCol]);
+      // 改修: 日付変更イベントを発火させて営業日数・警告表示を更新
+      startEl.dispatchEvent(new Event('change'));
+    }
+  }
 }
 
 document.addEventListener('mouseup', () => {
@@ -1375,7 +1395,8 @@ document.addEventListener('mousedown', e => {
   const inCell    = e.target.closest('.gantt-cell');
   const inInfo    = e.target.closest('#info-panel');
   const inReg     = e.target.closest('#register-btn');
-  const inDialog  = e.target.closest('#dialog-overlay');
+  // 改修: モーダル廃止に伴い、サイドパネル内クリックでも選択を維持
+  const inDialog  = e.target.closest('#side-panel');
   if (!inCell && !inInfo && !inReg && !inDialog) {
     clearSelection();
     renderCalendar();
@@ -1555,7 +1576,7 @@ document.getElementById('register-btn').addEventListener('click', openRegisterDi
 // 改修(マージ): info-delete-btn は撤去のためリスナ削除
 
 document.getElementById('info-extend-btn').addEventListener('click', () => {
-  const overlay = document.getElementById('extend-overlay');
+  // 改修: モーダル(extend-overlay)廃止→サイドパネル(extend-pane)に差し替え
   const res = state.reservations[state.selectedResId];
   // 改修(第7回): 開始日・終了日の両方を現在値で初期化
   if (res) {
@@ -1563,7 +1584,11 @@ document.getElementById('info-extend-btn').addEventListener('click', () => {
     document.getElementById('ext-end').value   = res.end.split('T')[0];
   }
   document.getElementById('ext-reason').value = '';
-  overlay.classList.remove('hidden');
+  // 改修: form-pane・プレースホルダを排他非表示にしてextend-paneを表示
+  document.getElementById('form-pane').classList.add('hidden');
+  document.getElementById('form-empty').classList.add('hidden');
+  document.getElementById('extend-pane').classList.remove('hidden');
+  state.formMode = null;  // 改修: 期間変更申請中は日付自動連動を無効
 });
 
 document.getElementById('ext-ok').addEventListener('click', () => {
@@ -1580,10 +1605,12 @@ document.getElementById('ext-ok').addEventListener('click', () => {
     return;
   }
   alert('申請処理は未実装です');
-  document.getElementById('extend-overlay').classList.add('hidden');
+  // 改修: extend-paneを閉じてプレースホルダを表示
+  closeFormPane();
 });
 document.getElementById('ext-cancel').addEventListener('click', () => {
-  document.getElementById('extend-overlay').classList.add('hidden');
+  // 改修: extend-paneを閉じてプレースホルダを表示
+  closeFormPane();
 });
 
 // 改修(マージ): info-xpx-btn は撤去のためリスナ削除
@@ -1698,8 +1725,18 @@ function buildLegendSelect(selectedId) {
   }).join('');
 }
 
+// 改修: フォームペインを閉じてプレースホルダを表示するヘルパ
+function closeFormPane() {
+  document.getElementById('form-pane').classList.add('hidden');
+  document.getElementById('extend-pane').classList.add('hidden');
+  document.getElementById('form-empty').classList.remove('hidden');
+  // 改修: フォームモードをリセット（日付自動連動の対象外にする）
+  state.formMode = null;
+}
+
 function showDialog(title, data, mode, resId = null) {
-  const overlay = document.getElementById('dialog-overlay');
+  // 改修: モーダル(dialog-overlay)廃止→サイドパネル(form-pane)に差し替え
+  const overlay = document.getElementById('form-pane');
   const titleEl = document.getElementById('dialog-title');
   const bodyEl  = document.getElementById('dialog-body');
   const okBtn   = document.getElementById('dialog-ok');
@@ -1900,7 +1937,12 @@ function showDialog(title, data, mode, resId = null) {
     }
   });
 
+  // 改修: form-paneを表示し、extend-pane・プレースホルダを排他非表示
+  document.getElementById('extend-pane').classList.add('hidden');
+  document.getElementById('form-empty').classList.add('hidden');
   overlay.classList.remove('hidden');
+  // 改修: 日付自動連動のためフォームモードを記録（登録時のみ連動）
+  state.formMode = mode;
 
   // 改修: 閲覧モードは全入力欄を編集不可・保存ボタン非表示・キャンセルを「閉じる」に変更。
   //        DOM要素は使い回しのため、通常モードでは明示的に元の状態へ復元する。
@@ -1943,7 +1985,7 @@ function showDialog(title, data, mode, resId = null) {
       status,
       marks,     // 改修(第8回): 検証完了日★配列
     };
-    overlay.classList.add('hidden');
+    closeFormPane();
     if (mode === 'register') {
       resData._id = genLocalId();
       state.reservations.push(resData);
@@ -1959,12 +2001,12 @@ function showDialog(title, data, mode, resId = null) {
     updateInfoPanel();
   };
   document.getElementById('dialog-cancel').onclick = () => {
-    overlay.classList.add('hidden');
+    closeFormPane();
   };
   // 改修(マージ): 編集ダイアログ内削除ボタン（成功時のみダイアログを閉じる）
   delBtn.onclick = () => {
     if (mode === 'edit' && resId !== null && deleteReservation(resId)) {
-      overlay.classList.add('hidden');
+      closeFormPane();
     }
   };
 }
@@ -2063,10 +2105,13 @@ async function saveCalendarImage() {
   const prevLegendOverflowY  = legendPanel ? legendPanel.style.overflowY  : '';
   const prevLegendHeight     = legendPanel ? legendPanel.style.height     : '';
   const prevLegendMaxHeight  = legendPanel ? legendPanel.style.maxHeight  : '';
+  // 改修: flex:1 1 40% が height:auto より優先されるため flex も一時解除
+  const prevLegendFlex       = legendPanel ? legendPanel.style.flex       : '';
   if (legendPanel) {
     legendPanel.style.overflowY = 'visible';
     legendPanel.style.height    = 'auto';
     legendPanel.style.maxHeight = 'none';
+    legendPanel.style.flex      = '0 0 auto';
   }
 
   try {
@@ -2112,6 +2157,8 @@ async function saveCalendarImage() {
       legendPanel.style.overflowY = prevLegendOverflowY;
       legendPanel.style.height    = prevLegendHeight;
       legendPanel.style.maxHeight = prevLegendMaxHeight;
+      // 改修: flex を元の値（空文字＝CSS定義に戻す）に復元
+      legendPanel.style.flex      = prevLegendFlex;
     }
     captureBtn.disabled = false;
   }

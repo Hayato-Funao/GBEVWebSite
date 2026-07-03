@@ -575,19 +575,77 @@ body {
   border: 1px solid #cbd5e1;
 }
 
-/* ── 凡例パネル ── */
-.legend-panel {
-  width: 200px;
-  min-width: 180px;
+/* ── 右サイドパネル（凡例＋フォームの上下2分割コンテナ・改修） ── */
+.side-panel {
+  width: 400px;
+  min-width: 360px;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border: 1px solid #cbd5e1;
   border-left: none;
+  background: #f8fafc;
+}
+
+/* ── 凡例パネル（上段・改修: width削除→flex比率で高さ確保） ── */
+.legend-panel {
+  flex: 1 1 40%;
+  min-height: 120px;
   background: #f8fafc;
   padding: 8px 6px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* ── フォーム未表示時プレースホルダ（改修） ── */
+.form-empty {
+  flex: 1 1 60%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font: 11px 'Meiryo UI', sans-serif;
+  color: #94a3b8;
+  padding: 16px;
+  border-top: 1px solid #e2e8f0;
+  line-height: 1.6;
+}
+
+/* ── フォームペイン（登録/編集/閲覧/期間変更申請の下段領域・改修） ── */
+.form-pane {
+  flex: 1 1 60%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-top: 1px solid #cbd5e1;
+}
+.form-pane-header {
+  background: #4f46e5;
+  color: #fff;
+  padding: 10px 14px;
+  font: bold 12px 'Meiryo UI', sans-serif;
+  flex-shrink: 0;
+}
+/* 改修: フォーム本体領域（独立スクロール） */
+.form-pane-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px 6px;
+}
+.form-pane-footer {
+  display: flex;
+  align-items: center;
+  padding: 6px 14px 10px;
+  flex-shrink: 0;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+/* 改修: フォームペインの削除ボタン（サイズは dialog-footer と同じ） */
+.form-pane-footer .btn-delete {
+  border-radius: 8px; padding: 0 16px; height: 36px; font-size: 11px;
 }
 .legend-title {
   font: bold 11px 'Meiryo UI', sans-serif;

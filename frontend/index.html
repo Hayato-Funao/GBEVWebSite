@@ -52,7 +52,53 @@
             <tbody id="gantt-body"></tbody>
           </table>
         </div>
-        <div id="legend-panel" class="legend-panel"></div>
+        <!-- 改修: 右サイドパネル（凡例＋フォーム領域を上下2分割・モーダル廃止） -->
+        <div id="side-panel" class="side-panel">
+          <!-- 上段: 凡例（id不変・renderLegendPanel()の描画先） -->
+          <div id="legend-panel" class="legend-panel"></div>
+          <!-- フォーム未表示時のプレースホルダ -->
+          <div id="form-empty" class="form-empty">予約セルをダブルクリック<br>または範囲選択して「＋登録」</div>
+          <!-- 下段: 登録・編集・閲覧フォーム（旧 #dialog-overlay の中身を移設） -->
+          <div id="form-pane" class="form-pane hidden">
+            <div class="form-pane-header"><span id="dialog-title">予約登録</span></div>
+            <div class="form-pane-body" id="dialog-body"></div>
+            <div class="form-pane-footer">
+              <!-- 改修(マージ): 削除ボタンをダイアログ内左側に配置（編集時のみ表示） -->
+              <button id="dialog-delete-btn" class="btn btn-delete hidden">削除</button>
+              <!-- 改修(マージ): キャンセル・保存は右揃え -->
+              <div class="dialog-footer-right">
+                <button id="dialog-cancel" class="btn btn-cancel">キャンセル</button>
+                <button id="dialog-ok"     class="btn btn-ok">登録</button>
+              </div>
+            </div>
+          </div>
+          <!-- 下段: 使用期間変更申請フォーム（旧 #extend-overlay の中身を移設） -->
+          <div id="extend-pane" class="form-pane hidden">
+            <div class="form-pane-header"><span>使用期間変更申請</span></div>
+            <div class="form-pane-body">
+              <!-- 改修(第7回): 開始日入力欄を追加 -->
+              <div class="form-row">
+                <label>変更後開始日:</label>
+                <input type="date" id="ext-start">
+              </div>
+              <div class="form-row">
+                <label>変更後終了日:</label>
+                <input type="date" id="ext-end">
+              </div>
+              <div class="form-row">
+                <label>変更理由:</label>
+                <textarea id="ext-reason" rows="3" placeholder="必須入力"></textarea>
+              </div>
+            </div>
+            <div class="form-pane-footer">
+              <!-- 改修(マージ): キャンセル・申請を右揃えラップ -->
+              <div class="dialog-footer-right">
+                <button id="ext-cancel" class="btn btn-cancel">キャンセル</button>
+                <button id="ext-ok" class="btn btn-ok">申請</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       <div id="info-panel" class="info-panel">
         <span id="info-hint"    class="info-hint">予約をクリックすると詳細を表示します</span>
@@ -80,55 +126,7 @@
   </main>
 </div>
 
-<!-- 登録・編集ダイアログ -->
-<div id="dialog-overlay" class="dialog-overlay hidden">
-  <div class="dialog-box">
-    <div class="dialog-header">
-      <span id="dialog-title">予約登録</span>
-    </div>
-    <div class="dialog-body" id="dialog-body"></div>
-    <div class="dialog-footer">
-      <!-- 改修(マージ): 削除ボタンをダイアログ内左側に配置（編集時のみ表示） -->
-      <button id="dialog-delete-btn" class="btn btn-delete hidden">削除</button>
-      <!-- 改修(マージ): キャンセル・保存は右揃え -->
-      <div class="dialog-footer-right">
-        <button id="dialog-cancel" class="btn btn-cancel">キャンセル</button>
-        <button id="dialog-ok"     class="btn btn-ok">登録</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- 改修(第7回): 使用期間変更申請ダイアログ（ガワのみ・実処理未実装） -->
-<div id="extend-overlay" class="dialog-overlay hidden">
-  <div class="dialog-box">
-    <div class="dialog-header">
-      <span>使用期間変更申請</span>
-    </div>
-    <div class="dialog-body">
-      <!-- 改修(第7回): 開始日入力欄を追加 -->
-      <div class="form-row">
-        <label>変更後開始日:</label>
-        <input type="date" id="ext-start">
-      </div>
-      <div class="form-row">
-        <label>変更後終了日:</label>
-        <input type="date" id="ext-end">
-      </div>
-      <div class="form-row">
-        <label>変更理由:</label>
-        <textarea id="ext-reason" rows="3" placeholder="必須入力"></textarea>
-      </div>
-    </div>
-    <div class="dialog-footer">
-      <!-- 改修(マージ): キャンセル・申請を右揃えラップ -->
-      <div class="dialog-footer-right">
-        <button id="ext-cancel" class="btn btn-cancel">キャンセル</button>
-        <button id="ext-ok" class="btn btn-ok">申請</button>
-      </div>
-    </div>
-  </div>
-</div>
+<!-- 改修: 登録・編集・閲覧・期間変更申請は右サイドパネル(#form-pane/#extend-pane)へ移設。旧overlay削除 -->
 
 <!-- 改修: html2canvasをローカル同梱（オフライン・社内網でも動作するよう） -->
 <script src="html2canvas.min.js"></script>
