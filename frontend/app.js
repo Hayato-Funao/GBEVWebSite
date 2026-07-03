@@ -33,6 +33,13 @@ function starTextForType(type) {
   const m = VERIFY_MARKS.find(v => v.key === type);
   return m ? m.star : '★';
 }
+// 改修(第9回): mark個別のタイトル（title）を優先し「タイトル＋★」を返す。
+//              titleが未定義の旧データはlabelにフォールバックして後方互換を維持
+function markStarText(mk) {
+  const m    = VERIFY_MARKS.find(v => v.key === mk.type);
+  const name = (mk.title != null) ? mk.title : (m ? m.label : '');
+  return name + '★';
+}
 
 // ────────────────────────────────────────────
 // 改修(第6回): クエリパラメータによる権限判定（見た目のみ・認証ではない）
@@ -792,7 +799,7 @@ function renderCalendar() {
             if (mkCol === null || mkCol < col) return;  // 表示範囲外・開始より前はスキップ
             const mkSpan = document.createElement('span');
             mkSpan.className   = 'res-mark';
-            mkSpan.textContent = starTextForType(mk.type);
+            mkSpan.textContent = markStarText(mk); // 改修(第9回): 検証名手動編集対応（名前＋★で表示）
             // 完了日セル右端を基点に右→左でテキストを配置（★が右端に来る）
             // 改修(第7回追補5): 列幅ハードコード26→CSS変数に変更（31日フィットで列幅が変動するため）
             // calc(9999px - 列数 * 実列幅 + 余白3px)
@@ -1740,16 +1747,19 @@ function showDialog(title, data, mode, resId = null) {
     <div id="form-row-marks" class="form-marks-group">
       <div class="form-marks-title">検証完了日（★）</div>
       ${VERIFY_MARKS.map(v => {
-        const existing = (data.marks || []).find(mk => mk.type === v.key);
-        const checked  = existing ? ' checked' : '';
-        const dateVal  = existing ? existing.date : (data.endIso || '');
-        const disAttr  = existing ? '' : ' disabled';
+        const existing   = (data.marks || []).find(mk => mk.type === v.key);
+        const checked    = existing ? ' checked' : '';
+        const dateVal    = existing ? existing.date : (data.endIso || '');
+        const disAttr    = existing ? '' : ' disabled';
+        // 改修(第9回): タイトルの初期値（保存済みtitleを優先、なければlabel）
+        const titleVal   = existing && existing.title != null ? existing.title : v.label;
+        const badgeText  = titleVal + '★';
         return '<div class="form-row form-mark-row" id="form-mark-row-' + v.key + '">' +
-               '<label class="mark-chk-label">' +
-               '<input type="checkbox" id="f-mark-' + v.key + '" class="f-mark-chk" data-key="' + v.key + '"' + checked + '> ' +
-               v.label + '</label>' +
+               '<input type="checkbox" id="f-mark-' + v.key + '" class="f-mark-chk" data-key="' + v.key + '"' + checked + '>' +
+               // 改修(第9回): ラベルを入力欄化（タイトルを直接編集可）
+               '<input type="text" id="f-mark-title-' + v.key + '" class="f-mark-title"' + disAttr + ' value="' + titleVal + '" placeholder="検証名">' +
                '<input type="date" id="f-mark-date-' + v.key + '" class="f-mark-date"' + disAttr + ' value="' + dateVal + '">' +
-               '<span class="mark-star-badge">' + v.star + '</span>' +
+               '<span id="f-mark-badge-' + v.key + '" class="mark-star-badge">' + badgeText + '</span>' +
                '</div>';
       }).join('')}
     </div>
@@ -1832,24 +1842,37 @@ function showDialog(title, data, mode, resId = null) {
       if (el) el.disabled = !isNormal;
     });
     // 改修(第8回): 通常状態以外では★マーカー入力を無効化
+    // 改修(第9回): タイトル入力欄（f-mark-title）も同条件で無効化
     VERIFY_MARKS.forEach(v => {
-      const chk = document.getElementById('f-mark-' + v.key);
-      const dt  = document.getElementById('f-mark-date-' + v.key);
+      const chk  = document.getElementById('f-mark-' + v.key);
+      const dt   = document.getElementById('f-mark-date-' + v.key);
+      const tt   = document.getElementById('f-mark-title-' + v.key);
       if (chk) chk.disabled = !isNormal;
-      // 完了日はチェックONかつ通常状態のときのみ有効
+      // 完了日・タイトルはチェックONかつ通常状態のときのみ有効
       if (dt)  dt.disabled  = !isNormal || !(chk && chk.checked);
+      if (tt)  tt.disabled  = !isNormal || !(chk && chk.checked);
     });
   }
   document.getElementById('f-status').addEventListener('change', updateStatusFields);
   updateStatusFields();
 
   // 改修(第8回): チェックボックスON/OFFで完了日入力欄を有効/無効切替
+  // 改修(第9回): タイトル入力欄も同期、バッジのライブ更新リスナを追加
   VERIFY_MARKS.forEach(v => {
-    const chk = document.getElementById('f-mark-' + v.key);
-    const dt  = document.getElementById('f-mark-date-' + v.key);
-    if (chk && dt) {
+    const chk   = document.getElementById('f-mark-' + v.key);
+    const dt    = document.getElementById('f-mark-date-' + v.key);
+    const tt    = document.getElementById('f-mark-title-' + v.key);
+    const badge = document.getElementById('f-mark-badge-' + v.key);
+    if (chk) {
       chk.addEventListener('change', () => {
-        dt.disabled = !chk.checked;
+        if (dt)  dt.disabled = !chk.checked;
+        if (tt)  tt.disabled = !chk.checked;
+      });
+    }
+    // タイトル入力→バッジテキストをリアルタイム更新
+    if (tt && badge) {
+      tt.addEventListener('input', () => {
+        badge.textContent = tt.value + '★';
       });
     }
   });
@@ -1862,12 +1885,14 @@ function showDialog(title, data, mode, resId = null) {
     const lm       = getLegendMap(_legend);
     const color    = lm[legendId] ? lm[legendId].color : '#fde68a';
     // 改修(第8回): チェック済み種別の検証完了日を marks 配列に格納
+    // 改修(第9回): タイトル（title）も保存（予約ごとに個別管理）
     const marks = [];
     VERIFY_MARKS.forEach(v => {
       const chk = document.getElementById('f-mark-' + v.key);
       const dt  = document.getElementById('f-mark-date-' + v.key);
+      const tt  = document.getElementById('f-mark-title-' + v.key);
       if (chk && chk.checked && !chk.disabled && dt && dt.value) {
-        marks.push({ type: v.key, date: dt.value });
+        marks.push({ type: v.key, date: dt.value, title: tt ? tt.value.trim() : v.label });
       }
     });
     const resData  = {

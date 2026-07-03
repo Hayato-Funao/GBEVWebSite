@@ -516,23 +516,33 @@ body {
   color: #64748b;
   margin-bottom: 6px;
 }
-/* ★チェックボックス行: label部分（チェックボックス＋テキスト） */
-.mark-chk-label {
-  width: 90px;
-  font-size: 11px;
-  color: #1e293b;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+/* 改修(第9回): チェックボックスをネイティブサイズに戻す
+   .form-row input (詳細度0,1,1) を上回るため .form-row input.f-mark-chk (詳細度0,2,1) を使用 */
+.form-row input.f-mark-chk {
+  flex: 0 0 auto;
+  width: auto;
+  height: auto;
+  border: none;
+  background: none;
+  padding: 0;
   cursor: pointer;
 }
-/* ★バッジ（種別ラベルの右に表示） */
+/* 改修(第9回): タイトルテキスト入力欄（ラベルそのものを直接編集） */
+.f-mark-title {
+  width: 96px;
+  font-size: 11px;
+  padding: 2px 4px;
+  border: 1px solid #cbd5e1;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.f-mark-title:disabled { background: #f1f5f9; color: #94a3b8; }
+/* ★バッジ（タイトル入力欄の右に表示） */
 .mark-star-badge {
   font: bold 11px 'Meiryo UI', sans-serif;
   color: #b91c1c;
   flex-shrink: 0;
-  min-width: 42px;
+  min-width: 52px;
 }
 /* 改修(第5回): 自動生成ラベル欄（読み取り専用の見た目） */
 #f-label[readonly] { background: #f1f5f9; color: #475569; }
