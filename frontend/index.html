@@ -67,6 +67,8 @@
             <div class="form-pane-footer">
               <!-- 改修(マージ): 削除ボタンをダイアログ内左側に配置（編集時のみ表示） -->
               <button id="dialog-delete-btn" class="btn btn-delete hidden">削除</button>
+              <!-- 改修: 利用終了ボタン（事務局モード・編集時のみ表示。ステータス更新処理は未実装） -->
+              <button id="dialog-terminate-btn" class="btn btn-terminate hidden">利用終了</button>
               <!-- 改修(マージ): キャンセル・保存は右揃え -->
               <div class="dialog-footer-right">
                 <button id="dialog-cancel" class="btn btn-cancel">キャンセル</button>
@@ -114,6 +116,8 @@
         <button id="info-extend-btn" class="btn btn-extend hidden">期間変更申請</button>
         <!-- 改修: 利用取消依頼ボタン（使用者モード・予約選択時に表示。送信処理は未実装） -->
         <button id="info-cancel-btn" class="btn btn-cancel-request hidden">利用取消依頼</button>
+        <!-- 改修: 利用終了報告ボタン（使用者モード・予約選択時に表示。送信処理は未実装） -->
+        <button id="info-report-btn" class="btn btn-report hidden">利用終了報告</button>
       </div>
     </div>
 

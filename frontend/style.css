@@ -105,6 +105,12 @@ body {
 /* 改修: 利用取消依頼ボタン（使用者モード・下部情報パネル） */
 .btn-cancel-request       { background: #dc2626; color: #fff; height: 26px; font-size: 10px; }
 .btn-cancel-request:hover { background: #b91c1c; }
+/* 改修: 利用終了報告ボタン（使用者モード・下部情報パネル） */
+.btn-report       { background: #0d9488; color: #fff; height: 26px; font-size: 10px; }
+.btn-report:hover { background: #0f766e; }
+/* 改修: 利用終了ボタン（事務局モード・下部情報パネル） */
+.btn-terminate       { background: #334155; color: #fff; height: 26px; font-size: 10px; }
+.btn-terminate:hover { background: #1e293b; }
 
 .btn-cancel {
   background: #e2e8f0; color: #475569;
@@ -645,13 +651,15 @@ body {
 .form-pane-footer {
   display: flex;
   align-items: center;
+  gap: 8px;
   padding: 6px 14px 10px;
   flex-shrink: 0;
   border-top: 1px solid #e2e8f0;
   background: #f8fafc;
 }
-/* 改修: フォームペインの削除ボタン（サイズは dialog-footer と同じ） */
-.form-pane-footer .btn-delete {
+/* 改修: フォームペインの削除ボタン・利用終了ボタン（サイズは dialog-footer と同じ） */
+.form-pane-footer .btn-delete,
+.form-pane-footer .btn-terminate {
   border-radius: 8px; padding: 0 16px; height: 36px; font-size: 11px;
 }
 .legend-title {

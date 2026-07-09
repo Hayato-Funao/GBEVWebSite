@@ -1319,13 +1319,15 @@ function updateInfoPanel() {
   const label     = document.getElementById('info-label');
   const applicant  = document.getElementById('info-applicant');
   // 改修(マージ): 削除ボタンをダイアログ内へ移設・XPX受領ボタン撤去のため参照を削除
-  const extendBtn  = document.getElementById('info-extend-btn');
+  const extendBtn    = document.getElementById('info-extend-btn');
   // 改修: 利用取消依頼ボタン（使用者モード・予約選択時に表示）
-  const cancelBtn  = document.getElementById('info-cancel-btn');
+  const cancelBtn    = document.getElementById('info-cancel-btn');
+  // 改修: 利用終了報告ボタン（使用者モード・予約選択時に表示）
+  const reportBtn    = document.getElementById('info-report-btn');
 
   if (selectedResId === null || !reservations[selectedResId]) {
     hint.classList.remove('hidden');
-    [machine, period, label, applicant, extendBtn, cancelBtn].forEach(el => el.classList.add('hidden'));
+    [machine, period, label, applicant, extendBtn, cancelBtn, reportBtn].forEach(el => el.classList.add('hidden'));
     return;
   }
 
@@ -1344,13 +1346,15 @@ function updateInfoPanel() {
   hint.classList.add('hidden');
   [machine, period, label].forEach(el => el.classList.remove('hidden'));
   // 改修(マージ): 削除ボタンはダイアログ内のため情報パネルからは表示制御不要
-  // 改修: 期間変更申請・利用取消依頼は使用者モードのみ表示
+  // 改修: 期間変更申請・利用取消依頼・利用終了報告は使用者モードのみ表示
   if (!isAdmin) {
     extendBtn.classList.remove('hidden');
     cancelBtn.classList.remove('hidden');
+    reportBtn.classList.remove('hidden');    // 改修: 利用終了報告（使用者モード）
   } else {
     extendBtn.classList.add('hidden');
     cancelBtn.classList.add('hidden');
+    reportBtn.classList.add('hidden');
   }
   machine.textContent = `筐体:  ${res.machine}`;
   period.textContent  = `期間:  ${periodStr}  （${biz}営業日）`;
@@ -1701,6 +1705,14 @@ document.getElementById('info-cancel-btn').addEventListener('click', () => {
   alert('利用取消依頼の送信処理は未実装です');
 });
 
+// 改修: 利用終了報告ボタンのクリックハンドラ（使用者モード。事務局への送信処理は未実装）
+document.getElementById('info-report-btn').addEventListener('click', () => {
+  if (!confirm('この予約の利用終了を報告しますか？')) return;
+  // TODO: 事務局へ利用終了報告メール送信を実装
+  alert('利用終了報告の送信処理は未実装です');
+});
+
+
 // 改修: マニュアルボタンのクリックハンドラ
 // PDF配置後は window.open('manual.pdf', '_blank') に切替。未配置期間はステータス欄に通知
 document.getElementById('manual-btn').addEventListener('click', () => {
@@ -1774,6 +1786,7 @@ function openRegisterDialog() {
     user:      '',             // 改修(SP連携マージ): 借用者
     applicant: '',
     remark:    '',
+    assignee:  state.assignees[getAllMachines()[row]] || '',  // 改修: ダイアログ担当者欄の初期値
     status:    'normal',
     room:      state.currentRoom,
     marks:     [],              // 改修(第8回): 検証完了日★初期値（空）
@@ -1792,6 +1805,7 @@ function openEditDialog(resId) {
     user:      res.user      || '',    // 改修(SP連携マージ): 借用者
     applicant: res.applicant || '',
     remark:    res.remark    || '',
+    assignee:  state.assignees[res.machine] || '',  // 改修: ダイアログ担当者欄の初期値（担当者列の現在値）
     status:    res.status    || 'normal',
     room:      res.room      || 'west',
     marks:     res.marks     || [],     // 改修(第8回): 検証完了日★を復元
@@ -1811,6 +1825,7 @@ function openViewDialog(resId) {
     user:      res.user      || '',    // 改修(SP連携マージ): 借用者
     applicant: res.applicant || '',
     remark:    res.remark    || '',
+    assignee:  state.assignees[res.machine] || '',  // 改修: ダイアログ担当者欄の初期値（担当者列の現在値）
     status:    res.status    || 'normal',
     room:      res.room      || 'west',
     marks:     res.marks     || [],
@@ -1865,11 +1880,14 @@ function showDialog(title, data, mode, resId = null) {
   const bodyEl  = document.getElementById('dialog-body');
   const okBtn   = document.getElementById('dialog-ok');
   // 改修(マージ): 編集ダイアログ内削除ボタン（編集モード＋管理者のみ表示）
-  const delBtn  = document.getElementById('dialog-delete-btn');
+  const delBtn       = document.getElementById('dialog-delete-btn');
+  // 改修: 利用終了ボタン（編集モード＋管理者のみ表示）
+  const terminateBtn = document.getElementById('dialog-terminate-btn');
 
   titleEl.textContent = title;
   okBtn.textContent   = mode === 'register' ? '登録' : '保存';
   delBtn.classList.toggle('hidden', !(isAdmin && mode === 'edit'));
+  terminateBtn.classList.toggle('hidden', !(isAdmin && mode === 'edit'));
 
   bodyEl.innerHTML = `
     <div class="form-row">
@@ -1931,6 +1949,11 @@ function showDialog(title, data, mode, resId = null) {
       <datalist id="remark-options">
         <option value="★">
       </datalist>
+    </div>
+    <!-- 改修: 担当者欄（仕様05章 入力項目）。保存時に担当者列（state.assignees）と連動 -->
+    <div id="form-row-assignee" class="form-row">
+      <label>担当者:</label>
+      <input type="text" id="f-assignee" value="${data.assignee || ''}" placeholder="担当者名">
     </div>
     <div id="form-row-marks" class="form-marks-group">
       <div class="form-marks-title">検証完了日（★）</div>
@@ -2022,12 +2045,14 @@ function showDialog(title, data, mode, resId = null) {
     const status   = document.getElementById('f-status').value;
     const isNormal = status === 'normal';
     // 改修(SP連携マージ): form-row-user（借用者行）を追加
-    ['form-row-label', 'form-row-legend', 'form-row-user', 'form-row-applicant', 'form-row-remark', 'form-row-marks'].forEach(id => {
+    // 改修: 担当者行（form-row-assignee）を追加
+    ['form-row-label', 'form-row-legend', 'form-row-user', 'form-row-applicant', 'form-row-remark', 'form-row-assignee', 'form-row-marks'].forEach(id => {
       const row = document.getElementById(id);
       if (row) row.style.opacity = isNormal ? '1' : '0.4';
     });
     // 改修(SP連携マージ): f-user（借用者入力）を追加
-    ['f-label', 'f-legend', 'f-user', 'f-applicant', 'f-remark'].forEach(id => {
+    // 改修: f-assignee（担当者入力）を追加
+    ['f-label', 'f-legend', 'f-user', 'f-applicant', 'f-remark', 'f-assignee'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.disabled = !isNormal;
     });
@@ -2116,6 +2141,14 @@ function showDialog(title, data, mode, resId = null) {
       status,
       marks,     // 改修(第8回): 検証完了日★配列
     };
+    // 改修: ダイアログの担当者欄を state.assignees に反映して担当者列と同期
+    const assigneeVal = (document.getElementById('f-assignee').value || '').trim();
+    if (assigneeVal) {
+      state.assignees[resData.machine] = assigneeVal;
+    } else {
+      delete state.assignees[resData.machine];
+    }
+    saveAssignees();
     closeFormPane();
     if (mode === 'register') {
       resData._id = genLocalId();
@@ -2160,6 +2193,12 @@ function showDialog(title, data, mode, resId = null) {
     if (mode === 'edit' && resId !== null && deleteReservation(resId)) {
       closeFormPane();
     }
+  };
+  // 改修: 利用終了ボタン（事務局モード・編集時のみ表示。ステータス更新処理は未実装）
+  terminateBtn.onclick = () => {
+    if (!confirm('この予約を利用終了にしますか？')) return;
+    // TODO: 事務局アクションリストのステータスを 10.利用終了 に更新を実装
+    alert('利用終了処理は未実装です');
   };
 }
 
