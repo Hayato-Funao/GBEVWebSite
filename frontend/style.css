@@ -99,6 +99,12 @@ body {
 /* 改修(第6回): 延長申請ボタン */
 .btn-extend       { background: #0891b2; color: #fff; height: 26px; font-size: 10px; }
 .btn-extend:hover { background: #0e7490; }
+/* 改修: マニュアルボタン（トップバー右側） */
+.btn-manual       { background: #475569; color: #fff; }
+.btn-manual:hover { background: #334155; }
+/* 改修: 利用取消依頼ボタン（使用者モード・下部情報パネル） */
+.btn-cancel-request       { background: #dc2626; color: #fff; height: 26px; font-size: 10px; }
+.btn-cancel-request:hover { background: #b91c1c; }
 
 .btn-cancel {
   background: #e2e8f0; color: #475569;
@@ -918,4 +924,63 @@ body {
   color: #374151;
   cursor: default;
   opacity: 1;
+}
+
+/* 改修: 承知/辞退ページ（?page=accept 専用URL） */
+.accept-page {
+  overflow-y: auto;
+}
+.accept-container {
+  max-width: 600px;
+  margin: 24px auto;
+  padding: 0 16px 40px;
+}
+.accept-heading {
+  font-size: 15px;
+  font-weight: bold;
+  color: #1e293b;
+  margin-bottom: 16px;
+}
+.accept-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+/* 辞退ブロックはボーダーを赤系に */
+.accept-card-reject {
+  border-color: #fca5a5;
+}
+.accept-card-title {
+  font-size: 12px;
+  font-weight: bold;
+  color: #374151;
+  margin: 0 0 10px;
+}
+.accept-note {
+  font-size: 11px;
+  color: #64748b;
+  margin: 0 0 8px;
+}
+.accept-info-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.accept-info-table th {
+  width: 90px;
+  text-align: left;
+  color: #64748b;
+  padding: 4px 6px;
+  font-weight: normal;
+}
+.accept-info-table td {
+  padding: 4px 6px;
+  color: #1e293b;
+}
+.accept-card-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
 }

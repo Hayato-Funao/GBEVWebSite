@@ -49,6 +49,16 @@ function markStarText(mk) {
 const _urlParams = new URLSearchParams(location.search);
 const isAdmin    = _urlParams.get('user') === 'admin';
 
+// 改修: ?page=accept で承知/辞退ページを単独表示（使用確定通知メールのリンクから直接開く専用URL）
+const _acceptMode = _urlParams.get('page') === 'accept';
+if (_acceptMode) {
+  // ナビタブを非表示（メールから直接開く単独ページのため不要）
+  document.querySelector('.nav-tabs').classList.add('hidden');
+  // 承知/辞退ページをアクティブ化し、ビュー画面を非表示
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-accept').classList.add('active');
+}
+
 // ────────────────────────────────────────────
 // 凡例カラーパレット（xlsx色分けルールより抽出）
 // ────────────────────────────────────────────
@@ -1310,10 +1320,12 @@ function updateInfoPanel() {
   const applicant  = document.getElementById('info-applicant');
   // 改修(マージ): 削除ボタンをダイアログ内へ移設・XPX受領ボタン撤去のため参照を削除
   const extendBtn  = document.getElementById('info-extend-btn');
+  // 改修: 利用取消依頼ボタン（使用者モード・予約選択時に表示）
+  const cancelBtn  = document.getElementById('info-cancel-btn');
 
   if (selectedResId === null || !reservations[selectedResId]) {
     hint.classList.remove('hidden');
-    [machine, period, label, applicant, extendBtn].forEach(el => el.classList.add('hidden'));
+    [machine, period, label, applicant, extendBtn, cancelBtn].forEach(el => el.classList.add('hidden'));
     return;
   }
 
@@ -1332,10 +1344,13 @@ function updateInfoPanel() {
   hint.classList.add('hidden');
   [machine, period, label].forEach(el => el.classList.remove('hidden'));
   // 改修(マージ): 削除ボタンはダイアログ内のため情報パネルからは表示制御不要
+  // 改修: 期間変更申請・利用取消依頼は使用者モードのみ表示
   if (!isAdmin) {
     extendBtn.classList.remove('hidden');
+    cancelBtn.classList.remove('hidden');
   } else {
     extendBtn.classList.add('hidden');
+    cancelBtn.classList.add('hidden');
   }
   machine.textContent = `筐体:  ${res.machine}`;
   period.textContent  = `期間:  ${periodStr}  （${biz}営業日）`;
@@ -1678,6 +1693,45 @@ document.getElementById('ext-cancel').addEventListener('click', () => {
 });
 
 // 改修(マージ): info-xpx-btn は撤去のためリスナ削除
+
+// 改修: 利用取消依頼ボタンのクリックハンドラ（PMOへの送信処理は未実装）
+document.getElementById('info-cancel-btn').addEventListener('click', () => {
+  if (!confirm('この予約の利用取消を依頼しますか？')) return;
+  // TODO: PMOへ利用取消依頼メール送信・ステータス更新（91.申請者取り下げ）を実装
+  alert('利用取消依頼の送信処理は未実装です');
+});
+
+// 改修: マニュアルボタンのクリックハンドラ
+// PDF配置後は window.open('manual.pdf', '_blank') に切替。未配置期間はステータス欄に通知
+document.getElementById('manual-btn').addEventListener('click', () => {
+  setStatus('マニュアルは準備中です');
+});
+
+// 改修: 承知/辞退ページのボタンハンドラ（送信処理は未実装・UIガワのみ）
+document.getElementById('accept-change-btn').addEventListener('click', () => {
+  const reason = document.getElementById('accept-change-reason').value.trim();
+  if (!reason) {
+    alert('変更理由を入力してください');
+    return;
+  }
+  // TODO: PMOへ予約内容変更依頼メール送信を実装
+  alert('変更依頼の送信処理は未実装です');
+});
+
+document.getElementById('accept-ok-btn').addEventListener('click', () => {
+  // TODO: 事務局アクションリストへの「承知」記録・PMOへ承知メール送信を実装
+  alert('承知処理は未実装です');
+});
+
+document.getElementById('accept-reject-btn').addEventListener('click', () => {
+  const reason = document.getElementById('accept-reject-reason').value.trim();
+  if (!reason) {
+    alert('辞退理由を入力してください');
+    return;
+  }
+  // TODO: ステータス更新（91.申請者取り下げ）・HILS使用履歴リスト削除・PMOへ辞退メール送信を実装
+  alert('辞退処理は未実装です');
+});
 
 function deleteReservation(resId) {
   // 改修(マージ): 成否を返すよう変更（ダイアログ側で成功時のみ閉じるため）

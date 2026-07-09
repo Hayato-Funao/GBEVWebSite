@@ -19,6 +19,8 @@
     <div class="status-area">
       <span id="status-msg" class="status-msg hidden"></span>
     </div>
+    <!-- 改修: マニュアルボタン（トップバー右側・ユーザー名表示の左）PDF未配置期間はステータス欄に通知 -->
+    <button id="manual-btn" class="btn btn-manual">マニュアル</button>
     <div class="user-area">
       <span id="user-name"></span>
     </div>
@@ -110,6 +112,8 @@
         <!-- 改修(マージ): 削除ボタンを情報パネルから編集ダイアログ内へ移設。XPX受領ボタンは撤去。 -->
         <!-- 改修(第7回): 使用期間変更申請ボタン（使用者モード・予約選択時に表示。ガワのみ） -->
         <button id="info-extend-btn" class="btn btn-extend hidden">期間変更申請</button>
+        <!-- 改修: 利用取消依頼ボタン（使用者モード・予約選択時に表示。送信処理は未実装） -->
+        <button id="info-cancel-btn" class="btn btn-cancel-request hidden">利用取消依頼</button>
       </div>
     </div>
 
@@ -121,6 +125,70 @@
     <!-- 申請画面（骨組み） -->
     <div id="page-request" class="page">
       <div class="placeholder">【申請画面】開発中</div>
+    </div>
+
+    <!-- 承知/辞退ページ（専用URL: ?page=accept で起動）使用確定通知メールのリンクから直接開く独立ページ -->
+    <div id="page-accept" class="page accept-page">
+      <div class="accept-container">
+        <h2 class="accept-heading">使用確定のご確認</h2>
+
+        <!-- 予約内容確認エリア -->
+        <div class="accept-card">
+          <h3 class="accept-card-title">予約内容</h3>
+          <table class="accept-info-table">
+            <tr><th>ラベル</th><td id="accept-info-label">−</td></tr>
+            <tr><th>借用者</th><td id="accept-info-user">−</td></tr>
+            <tr><th>使用開始日</th><td id="accept-info-start">−</td></tr>
+            <tr><th>使用終了日</th><td id="accept-info-end">−</td></tr>
+          </table>
+        </div>
+
+        <!-- 予約内容変更依頼フォーム（承知前に内容を変更したい場合） -->
+        <div class="accept-card">
+          <h3 class="accept-card-title">予約内容を変更する場合</h3>
+          <p class="accept-note">変更が必要な場合は以下を入力してPMOへ変更依頼を送信してください。</p>
+          <div class="form-row">
+            <label>使用開始日:</label>
+            <input type="date" id="accept-new-start">
+          </div>
+          <div class="form-row">
+            <label>使用終了日:</label>
+            <input type="date" id="accept-new-end">
+          </div>
+          <div class="form-row">
+            <label>変更理由（必須）:</label>
+            <textarea id="accept-change-reason" rows="3" placeholder="変更理由を入力してください"></textarea>
+          </div>
+          <div class="accept-card-footer">
+            <button id="accept-change-btn" class="btn btn-ok">変更依頼を送信</button>
+          </div>
+        </div>
+
+        <!-- 承知ブロック -->
+        <div class="accept-card">
+          <h3 class="accept-card-title">承知する</h3>
+          <div class="form-row">
+            <label>理由（任意）:</label>
+            <textarea id="accept-ok-reason" rows="2" placeholder="任意入力"></textarea>
+          </div>
+          <div class="accept-card-footer">
+            <button id="accept-ok-btn" class="btn btn-ok">承知</button>
+          </div>
+        </div>
+
+        <!-- 辞退ブロック -->
+        <div class="accept-card accept-card-reject">
+          <h3 class="accept-card-title">辞退する</h3>
+          <div class="form-row">
+            <label>辞退理由（必須）:</label>
+            <textarea id="accept-reject-reason" rows="2" placeholder="辞退理由を入力してください（必須）"></textarea>
+          </div>
+          <div class="accept-card-footer">
+            <button id="accept-reject-btn" class="btn btn-delete">辞退</button>
+          </div>
+        </div>
+
+      </div>
     </div>
 
   </main>
