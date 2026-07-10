@@ -111,6 +111,51 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 改修(第13回): PATCH /api/action-item/:id/status — 事務局アクションリストのステータス更新 W-5/W-12
+  const actionStatusMatch = pathname.match(/^\/api\/action-item\/(\d+)\/status$/);
+  if (actionStatusMatch && method === 'PATCH') {
+    if (IS_DUMMY) return jsonOk(res, { success: true, dummy: true });
+    try {
+      const body = await readBody(req);
+      await sp.runCommand('update_action_status', [actionStatusMatch[1], body.status]);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('PATCH /api/action-item/status:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(第13回): PATCH /api/action-item/:id/state — 事務局アクションリストの状態列更新 W-7
+  const actionStateMatch = pathname.match(/^\/api\/action-item\/(\d+)\/state$/);
+  if (actionStateMatch && method === 'PATCH') {
+    if (IS_DUMMY) return jsonOk(res, { success: true, dummy: true });
+    try {
+      const body = await readBody(req);
+      await sp.runCommand('update_action_state', [actionStateMatch[1], body.state]);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('PATCH /api/action-item/state:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(第12回): GET /api/action-item/:id — 事務局アクションリストの単一行を取得
+  // 改修: idはTitle列の値（非数値・日本語も許容）。復号してPythonに渡す
+  const actionItemMatch = pathname.match(/^\/api\/action-item\/([^\/]+)$/);
+  if (actionItemMatch && method === 'GET') {
+    if (IS_DUMMY) return jsonOk(res, { dummy: true, id: 0, category: '統合HILS利用', applicant: 'テスト太郎', machineType: '機種X' });
+    try {
+      const item = await sp.runCommand('get_action_item', [decodeURIComponent(actionItemMatch[1])]);
+      jsonOk(res, normalizeActionItem(item));
+    } catch (e) {
+      console.error('GET /api/action-item:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
   // ── GET /api/reservations ──
   if (pathname === '/api/reservations' && method === 'GET') {
     if (IS_DUMMY) return jsonOk(res, DUMMY_RESERVATIONS);
@@ -170,28 +215,61 @@ const server = http.createServer(async (req, res) => {
   serveStatic(req, res, pathname);
 });
 
-// ── SP列名変換（実際のSPリスト列名に合わせて調整）──
+// 改修(第13回): SP列名変換を統合HILS使用履歴リストの実内部名に差替え
+// field_1=設備, field_6=設備使用開始日, field_7=設備使用終了日,
+// OData__x7533__x8acb__x8005__x540d_=使用者名（申請者名）, Title=ラベル（案件名）
+// colorはHILS使用履歴リストに列がないため固定値（#fde68a）で返す
 function normalizeSpItem(item) {
+  // SharePointのDateTime列はISO形式（例: /Date(1234567890000)/またはYYYY-MM-DDTHH:mm:ssZ）で返る
+  // 日付部分のみ（YYYY-MM-DD）を抽出して返す
+  function extractDate(val) {
+    if (!val) return '';
+    // /Date(ミリ秒)/ 形式
+    const msMatch = String(val).match(/\/Date\((\d+)\)\//);
+    if (msMatch) {
+      return new Date(parseInt(msMatch[1])).toISOString().split('T')[0];
+    }
+    // ISO形式
+    if (String(val).includes('T')) return val.split('T')[0];
+    return val;
+  }
   return {
     id:      item.Id,
-    machine: item.Title        || '',
-    start:   item.StartDate    || '',
-    end:     item.EndDate      || '',
-    label:   item.ProjectName  || '',
-    color:   item.Color        || '#fde68a',
-    user:    item.BorrowerName || '',
+    machine: item.field_1                                       || '',
+    start:   extractDate(item.field_6),
+    end:     extractDate(item.field_7),
+    label:   item.Title                                         || '',
+    color:   '#fde68a',  // 使用履歴リストにcolor列なし → UI固定値
+    user:    item['OData__x7533__x8acb__x8005__x540d_']         || '',
   };
 }
 
+// 改修(第12回): 事務局アクションリスト行のSP列名→フロント項目変換
+function normalizeActionItem(item) {
+  return {
+    id:          item.Id,
+    category:    item['OData__x5206__x985e_']                                                       || '',  // 分類
+    applicant:   item['OData__x7533__x8acb__x8005__x540d_']                                         || '',  // 申請者名
+    email:       item['OData__x7533__x8acb__x8005__x30e1__x30'] || '',  // 申請者メールアドレス（SP内部名32文字截断）
+    machineType: item['OData__x6a5f__x7a2e__x547c__x79f0_']                                         || '',  // 機種呼称（ラベル生成用）
+  };
+}
+
+// 改修(第13回): フロント項目→統合HILS使用履歴リストのSP列名変換
+// field_1=設備, field_6=設備使用開始日(DateTime), field_7=設備使用終了日(DateTime),
+// Title=ラベル（案件名）, OData__x7533__x8acb__x8005__x540d_=使用者名
+// color列は存在しないため書き込まない
 function toSpFields(data) {
   const f = {};
-  if (data.machine !== undefined) f.Title        = data.machine;
-  // 改修(SP連携マージ): SharePoint DateTime列に合わせてISO形式（T00:00:00Z）で渡す
-  if (data.start   !== undefined) f.StartDate    = data.start ? data.start.split('T')[0] + 'T00:00:00Z' : null;
-  if (data.end     !== undefined) f.EndDate      = data.end   ? data.end.split('T')[0]   + 'T00:00:00Z' : null;
-  if (data.label   !== undefined) f.ProjectName  = data.label;
-  if (data.color   !== undefined) f.Color        = data.color;
-  if (data.user    !== undefined) f.BorrowerName = data.user;
+  if (data.label   !== undefined) f.Title                                      = data.label;
+  if (data.machine !== undefined) f.field_1                                     = data.machine;
+  // DateTime列: ISO形式（T00:00:00Z）でSharePointに渡す
+  if (data.start   !== undefined) f.field_6                                     = data.start ? data.start.split('T')[0] + 'T00:00:00Z' : null;
+  if (data.end     !== undefined) f.field_7                                     = data.end   ? data.end.split('T')[0]   + 'T00:00:00Z' : null;
+  if (data.user    !== undefined) f['OData__x7533__x8acb__x8005__x540d_']       = data.user;
+  // 改修: 使用者アドレス列（申請者メールアドレス）へ書き込み。空の場合はスキップ（編集時の意図しないブランク上書き防止）
+  if (data.email) f['OData__x7533__x8acb__x8005__x30a2__x30'] = data.email;
+  // color は使用履歴リストに列がないため書き込みスキップ
   return f;
 }
 

@@ -74,4 +74,9 @@ async function deleteListItem(_token, itemId) {
   await runHelper(['delete_item', String(itemId)]);
 }
 
-module.exports = { getAppToken, getListItems, addListItem, updateListItem, deleteListItem };
+// 改修(第12回): 任意コマンドを python sp_helper.py で実行する汎用メソッド
+function runCommand(cmd, args) {
+  return runHelper([cmd, ...(args || [])]);
+}
+
+module.exports = { getAppToken, getListItems, addListItem, updateListItem, deleteListItem, runCommand };

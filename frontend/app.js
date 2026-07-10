@@ -272,6 +272,10 @@ const state = {
   selectedResId: null,
   anchorCell:    null,
   formMode:      null,  // 改修: サイドパネル表示中のモード('register'|'edit'|'view'|null)
+  // 改修(第12回): 起動時に取得した事務局アクションリストのID（W-6）
+  actionItemId:  null,
+  // 改修(第12回): URLパラメータ経由の自動記入用データ（W-4）
+  autoFill:      null,
 };
 
 // 改修: メイン筐体と予備を結合した全環境名リストを返す（行インデックス計算に使用）
@@ -403,7 +407,8 @@ async function fetchReservations() {
   }
 }
 
-// 改修(SP連携マージ): SP列に対応する最小項目 {machine,start,end,label,color,user} を組み立てる
+// 改修(SP連携マージ): SP列に対応する最小項目を組み立てる
+// 改修: user（使用者名列）は申請者欄の値を使用。email（使用者アドレス列）を追加
 function buildSpPayload(resData) {
   const lm    = getLegendMap(_legend);
   const color = (resData.legendId && lm[resData.legendId]) ? lm[resData.legendId].color : (resData.color || '#fde68a');
@@ -411,9 +416,10 @@ function buildSpPayload(resData) {
     machine: resData.machine,
     start:   resData.start,
     end:     resData.end,
-    label:   resData.label || '',
+    label:   resData.label     || '',
     color,
-    user:    resData.user  || '',
+    user:    resData.applicant || '',  // 改修: 使用者名列には申請者欄の値を使用
+    email:   resData.email     || '',  // 改修: 使用者アドレス列へ申請者メールアドレスを転記
   };
 }
 
@@ -1844,7 +1850,8 @@ const LABEL_FIELD_SETS = [
     { key: 'cat',  label: 'カテゴリ', placeholder: '例）カテゴリ',  required: true },
     { key: 'eng',  label: 'ENGカテ',  placeholder: '例）ENGカテ',   required: true },
   ]},
-  { match: n => n.includes('一般募集'), prefix: '', parts: [
+  // 改修(第16回): 一般募集ラベルに接頭辞 ')' を追加 U-1c
+  { match: n => n.includes('一般募集'), prefix: ')', parts: [
     { key: 'no',   label: '予約管理No', placeholder: '例）001',       required: true },
     { key: 'code', label: '機種コード', placeholder: '例）ABCコード', required: true },
   ]},
@@ -1946,8 +1953,8 @@ function showDialog(title, data, mode, resId = null) {
       <label>備考:</label>
       <input type="text" id="f-remark" list="remark-options"
              value="${data.remark || ''}" placeholder="自由記入">
+      <!-- 改修(第16回): 備考 datalist の「★」残骸オプション撤去 U-4（VERIFY_MARKS 系★には触れない） -->
       <datalist id="remark-options">
-        <option value="★">
       </datalist>
     </div>
     <!-- 改修: 担当者欄（仕様05章 入力項目）。保存時に担当者列（state.assignees）と連動 -->
@@ -2071,6 +2078,16 @@ function showDialog(title, data, mode, resId = null) {
   document.getElementById('f-status').addEventListener('change', updateStatusFields);
   updateStatusFields();
 
+  // 改修(第12回): URLパラメータ経由の自動記入 W-4
+  // 改修: 申請者名は借用者欄ではなく申請者欄（f-applicant）にセット
+  if (mode === 'register' && state.autoFill) {
+    const fApplicant = document.getElementById('f-applicant');
+    if (fApplicant) fApplicant.value = state.autoFill.applicant;
+    // ラベル（案件名）入力欄はフォーム種別依存のため、フィールドが存在する場合のみセット
+    const fLabel = document.getElementById('f-label');
+    if (fLabel) fLabel.value = state.autoFill.label;
+  }
+
   // 改修(第8回): チェックボックスON/OFFで完了日入力欄を有効/無効切替
   // 改修(第9回): タイトル入力欄も同期、バッジのライブ更新リスナを追加
   VERIFY_MARKS.forEach(v => {
@@ -2137,6 +2154,7 @@ function showDialog(title, data, mode, resId = null) {
       color,
       user:      document.getElementById('f-user').value.trim(),      // 改修(SP連携マージ): 借用者
       applicant: document.getElementById('f-applicant').value.trim(),
+      email:     state.autoFill ? state.autoFill.email : '',         // 改修: 申請者メールアドレス（使用者アドレス列へ転記）
       remark:    document.getElementById('f-remark').value.trim(),
       status,
       marks,     // 改修(第8回): 検証完了日★配列
@@ -2165,6 +2183,44 @@ function showDialog(title, data, mode, resId = null) {
         state.reservations[state.selectedResId].spId = newSpId;
         saveReservations(state.reservations);
       }
+      // 改修(第13回): 登録成功後に事務局アクションリストのステータス・状態を更新 W-5/W-7
+      // state.actionItemIdはURLの?id=パラメータで起動した場合のみ設定される
+      if (state.actionItemId) {
+        (async () => {
+          try {
+            // ① ステータスを「1.仮申請受領」に更新
+            const r1 = await fetch(`/api/action-item/${state.actionItemId}/status`, {
+              method:  'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ status: '1.仮申請受領' }),
+            });
+            // 改修: res.okを検査してエラーを画面に表示
+            if (!r1.ok) {
+              const e1 = await r1.json().catch(() => ({}));
+              console.error('ステータス更新失敗:', e1);
+              setStatus(`ステータス更新に失敗しました: ${e1.error || r1.status}`, '#ef4444');
+            } else {
+              setStatus('ステータスを更新しました', '#22c55e');
+            }
+            // ② 状態列（通常/予備/故障/休日）を更新
+            if (resData.status) {
+              const r2 = await fetch(`/api/action-item/${state.actionItemId}/state`, {
+                method:  'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ state: resData.status }),
+              });
+              // 改修: エラー時はコンソールに出力
+              if (!r2.ok) {
+                const e2 = await r2.json().catch(() => ({}));
+                console.error('状態更新失敗:', e2);
+              }
+            }
+          } catch (e) {
+            console.error('登録後アクションリスト更新エラー:', e);
+            setStatus('予約は登録されましたがアクションリスト更新に失敗しました', '#ef4444');
+          }
+        })();
+      }
     } else if (mode === 'edit' && resId !== null) {
       // 改修(SP連携マージ): 編集前のspIdを退避してから上書き
       const prevSpId = state.reservations[resId].spId;
@@ -2182,6 +2238,26 @@ function showDialog(title, data, mode, resId = null) {
           state.reservations[resId].spId = newSpId;
           saveReservations(state.reservations);
         }
+      }
+      // 改修(第13回): 更新後に事務局アクションリストのステータスを「1.仮申請受領」へ戻す W-12
+      if (state.actionItemId) {
+        (async () => {
+          try {
+            const r = await fetch(`/api/action-item/${state.actionItemId}/status`, {
+              method:  'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ status: '1.仮申請受領' }),
+            });
+            // 改修: res.okを検査してエラーを画面に表示
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              console.error('ステータス更新失敗:', err);
+              setStatus(`ステータス更新に失敗しました: ${err.error || r.status}`, '#ef4444');
+            }
+          } catch (e) {
+            console.error('更新後アクションリスト更新エラー:', e);
+          }
+        })();
       }
     }
   };
@@ -2237,6 +2313,36 @@ function mapLegacyMachine(name) {
 async function init() {
   document.getElementById('user-name').textContent = isAdmin ? '事務局' : 'ユーザー';
   if (!isAdmin) document.getElementById('register-btn').classList.add('hidden');
+
+  // 改修(第12回): URLクエリパラメータから仮IDを受取り、SPからアクションリスト行を取得（W-2）
+  const _actionId = _urlParams.get('id');  // 事務局アクションリストの仮ID
+  if (_actionId) {
+    try {
+      setStatus('案件情報を読み込み中...', 'orange');
+      // 改修: URLのidはTitle列の値。encodeURIComponentで安全に渡す
+      const actionItem = await fetch(`/api/action-item/${encodeURIComponent(_actionId)}`).then(r => r.json());
+      // 改修(第12回): PATCH対象はアクションリストのSP内部ID。Title値ではなく取得行のIdを保持する（W-6）
+      state.actionItemId = actionItem.id;
+      // 改修(第12回): 分類によるルーム自動切替 W-3（南HILSのみ有効化）
+      if (actionItem.category === '統合HILS利用') {
+        state.currentRoom = 'south';
+        // 後日実装（西HILSルーム）:
+        // } else if (actionItem.category === 'HILS申請' || actionItem.category === 'FI-XPX') {
+        //   state.currentRoom = 'west';
+      }
+      // 改修(第12回): 自動記入用データをstateに保持（登録ダイアログで初期値セット）W-4
+      state.autoFill = {
+        label:     actionItem.machineType || '',  // 機種呼称をラベル初期値に
+        applicant: actionItem.applicant   || '',  // 申請者名を申請者欄初期値に（改修: 借用者欄から変更）
+        email:     actionItem.email       || '',
+        category:  actionItem.category    || '',
+      };
+      setStatus('');
+    } catch (e) {
+      console.error('action-item 取得エラー:', e);
+      setStatus('案件情報の取得に失敗しました', 'red');
+    }
+  }
 
   state.machinesByRoom  = loadMachines();
   state.sparesByRoom    = loadSpares();
