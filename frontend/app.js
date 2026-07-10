@@ -276,6 +276,8 @@ const state = {
   actionItemId:  null,
   // 改修(第14回): 辞退時の使用履歴行削除用に保持するSP内部ID
   actionHilsId:  null,
+  // 改修(起動連携): 辞退時のCSV行削除用に保持する使用履歴行の設備/開始日/終了日
+  actionHilsRes: null,
   // 改修(第12回): URLパラメータ経由の自動記入用データ（W-4）
   autoFill:      null,
 };
@@ -418,6 +420,56 @@ async function fetchReservations() {
     console.error('予約取得失敗:', e);
     setStatus('データ取得に失敗しました（ローカルデータを使用）', '#ef4444');
     return null;  // 改修(SP連携マージ): エラー時はnullでfetchできなかったことを示す
+  }
+}
+
+// 改修(起動連携): 凡例色リストCSVを配列として取得する
+async function fetchLegendColors() {
+  try {
+    const res = await fetch('/api/legend-colors');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.error('凡例色リストCSV取得失敗:', e);
+    return [];
+  }
+}
+
+// 改修(起動連携): 凡例色リストCSVに行を追記/上書きする
+// 突合キー: machine + start + end
+async function apiAppendLegendColor(resData) {
+  try {
+    await fetch('/api/legend-colors', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        machine:   resData.machine   || '',
+        start:     resData.start     || '',
+        end:       resData.end       || '',
+        project:   resData.label     || '',
+        color:     resData.color     || '#fde68a',
+        borrower:  resData.user      || '',
+        applicant: resData.applicant || '',
+        status:    resData.status    || 'normal',
+        legendId:  resData.legendId  || '',
+        remark:    resData.remark    || '',
+        marks:     resData.marks     || [],
+      }),
+    });
+  } catch (e) {
+    console.error('凡例色リストCSV追記失敗:', e);
+  }
+}
+
+// 改修(起動連携): 凡例色リストCSVの該当行（machine+start+end）を削除する
+async function apiDeleteLegendColor(machine, start, end) {
+  if (!machine || !start || !end) return;
+  try {
+    const params = new URLSearchParams({ machine, start, end });
+    await fetch(`/api/legend-colors?${params}`, { method: 'DELETE' });
+  } catch (e) {
+    console.error('凡例色リストCSV行削除失敗:', e);
   }
 }
 
@@ -1856,6 +1908,11 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
       // ② 統合HILS使用履歴リストから当該行を削除（突合成功時のみ。失敗時は辞退処理を継続）
       if (state.actionHilsId) {
         await fetch(`/api/reservations/${state.actionHilsId}`, { method: 'DELETE' });
+        // 改修(起動連携): SP行削除に合わせてCSVの該当行も削除する
+        if (state.actionHilsRes) {
+          const { machine, start, end } = state.actionHilsRes;
+          await apiDeleteLegendColor(machine, start, end);
+        }
       }
     }
     // ③ PMOへ辞退メール送信
@@ -1874,13 +1931,19 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
 function deleteReservation(resId) {
   // 改修(マージ): 成否を返すよう変更（ダイアログ側で成功時のみ閉じるため）
   if (!confirm('この予約を削除しますか？')) return false;
-  // 改修(SP連携マージ): 削除前にspIdを退避してSP削除を非同期実行（楽観更新）
-  const spId = state.reservations[resId] ? state.reservations[resId].spId : null;
+  // 改修(SP連携マージ): 削除前にspId/設備/日付を退避してSP削除・CSV行削除を非同期実行（楽観更新）
+  const spId    = state.reservations[resId] ? state.reservations[resId].spId     : null;
+  // 改修(起動連携): CSV削除キーとなる設備/開始日/終了日を削除前に退避
+  const delMachine = state.reservations[resId] ? state.reservations[resId].machine : null;
+  const delStart   = state.reservations[resId] ? state.reservations[resId].start   : null;
+  const delEnd     = state.reservations[resId] ? state.reservations[resId].end     : null;
   state.reservations.splice(resId, 1);
   saveReservations(state.reservations);
   clearSelection();
   renderCalendar();
   if (spId != null) apiDelete(spId);
+  // 改修(起動連携): SPアイテム削除に合わせてCSVの該当行も削除する
+  if (delMachine && delStart && delEnd) apiDeleteLegendColor(delMachine, delStart, delEnd);
   return true;
 }
 
@@ -2303,6 +2366,8 @@ function showDialog(title, data, mode, resId = null) {
         state.reservations[state.selectedResId].spId = newSpId;
         saveReservations(state.reservations);
       }
+      // 改修(起動連携): 凡例色リストCSVに追記（色・状態等リッチ項目を永続化）
+      await apiAppendLegendColor(resData);
       // 改修(第13回): 登録成功後に事務局アクションリストのステータス・状態を更新 W-5/W-7
       // state.actionItemIdはURLの?id=パラメータで起動した場合のみ設定される
       if (state.actionItemId) {
@@ -2359,6 +2424,8 @@ function showDialog(title, data, mode, resId = null) {
           saveReservations(state.reservations);
         }
       }
+      // 改修(起動連携): 凡例色リストCSVを更新（同一 machine+start+end で上書き）
+      await apiAppendLegendColor(state.reservations[resId]);
       // 改修(第13回): 更新後に事務局アクションリストのステータスを「1.仮申請受領」へ戻す W-12
       if (state.actionItemId) {
         (async () => {
@@ -2477,14 +2544,20 @@ async function init() {
       state.actionItemId = actionItem.id;
       // 改修(第14回): 辞退時の使用履歴削除用に、対応する使用履歴行のSP idを特定して保持
       // 突合キー: label（machineType）+ user（email）。一致しなければ削除はスキップする（辞退処理自体は継続）
-      state.actionHilsId = null;
+      state.actionHilsId  = null;
+      // 改修(起動連携): 辞退時のCSV行削除用に設備/開始日/終了日も保持する
+      state.actionHilsRes = null;
       try {
         const _list = await fetch('/api/reservations').then(r => r.json());
         const _hit  = _list.find(x =>
           x.label === (actionItem.machineType || '') &&
           (!actionItem.email || x.user === actionItem.email)
         );
-        if (_hit) state.actionHilsId = _hit.id;
+        if (_hit) {
+          state.actionHilsId  = _hit.id;
+          // 改修(起動連携): 設備/開始日/終了日をCSV削除キーとして保持
+          state.actionHilsRes = { machine: _hit.machine, start: _hit.start, end: _hit.end };
+        }
       } catch (_) { /* 突合失敗は無視。辞退処理継続 */ }
       // 改修(第12回): 分類によるルーム自動切替 W-3（南HILSのみ有効化）
       if (actionItem.category === '統合HILS利用') {
@@ -2513,34 +2586,56 @@ async function init() {
   syncRoomViews();
   document.getElementById('room-select').value = state.currentRoom;
 
-  // 改修(SP連携マージ): 起動毎にSPから取得し、localStorageのリッチ項目（legendId/status/★等）をspIdでマージ
+  // 改修(起動連携): SPから予約取得後、凡例色リストCSVからリッチ項目を復元して反映
   setStatus('データを読み込み中...', 'orange');
   const raw = await fetchReservations();
+  // 改修(起動連携): CSVを読み込み、突合キー(machine|start|end)でMapを構築
+  const csvList = await fetchLegendColors();
+  const csvMap  = {};
+  csvList.forEach(c => {
+    const key = `${c.machine}|${c.start}|${c.end}`;
+    csvMap[key] = c;
+  });
+
   if (raw !== null) {
-    // SP取得成功: localStorageの既存データから spId をキーにリッチ項目を抽出してマージ
+    // SP取得成功: CSVを優先、次にlocalStorageのリッチ項目をspIdでマージ（フォールバック）
     const savedForMerge = loadReservations() || [];
     const richMap = {};
     savedForMerge.forEach(r => { if (r.spId != null) richMap[r.spId] = r; });
     state.reservations = raw.map((res, idx) => {
-      const ex = richMap[res.id] || {};
+      // 改修(起動連携): 使用履歴リスト(南ルーム)はfield_1の生値をmachineとして使用
+      // （mapLegacyMachineはHELIOS→筐体変換であり西ルーム/レガシー専用のため適用しない）
+      const machine = res.machine;
+      const csvKey  = `${machine}|${res.start}|${res.end}`;
+      const csv     = csvMap[csvKey] || {};
+      const ex      = richMap[res.id] || {};
       return {
         spId:      res.id,
         _id:       ex._id != null ? ex._id : idx + 1,
-        machine:   mapLegacyMachine(res.machine),
+        machine,
         start:     res.start,
         end:       res.end,
         label:     res.label   || '',
-        color:     res.color   || '#fde68a',
-        user:      res.user    || '',
-        // ローカルにしか保存されていないリッチ項目
-        legendId:  ex.legendId  || (_legend.length > 0 ? _legend[0].id : ''),
-        status:    ex.status    || 'normal',
-        room:      ex.room      || 'west',
-        applicant: ex.applicant || '',
-        remark:    ex.remark    || '',
-        marks:     ex.marks     || [],
+        // 改修(起動連携): 申請者名はSP使用者名列（field_1→user）から取得
+        applicant: res.user    || ex.applicant || '',
+        // 改修(起動連携): SP列が無いリッチ項目はCSVから復元、無ければlocalStorage→既定値の順
+        color:     csv.color    || ex.color    || '#fde68a',
+        user:      csv.borrower || ex.user     || '',
+        legendId:  csv.legendId || ex.legendId || (_legend.length > 0 ? _legend[0].id : ''),
+        status:    csv.status   || ex.status   || 'normal',
+        remark:    csv.remark   || ex.remark   || '',
+        marks:     (csv.marks && csv.marks.length > 0) ? csv.marks : (ex.marks || []),
+        // 改修(起動連携): 使用履歴リストの予約は南ルームに固定（西ルームではない）
+        room:      'south',
       };
     });
+    // 改修(起動連携): SP予約のdistinct設備名を南ルームの筐体一覧に反映（行を動的生成）
+    const spMachines = [...new Set(state.reservations.map(r => r.machine).filter(Boolean))];
+    const existing   = state.machinesByRoom.south || [];
+    spMachines.forEach(m => { if (!existing.includes(m)) existing.push(m); });
+    state.machinesByRoom.south = existing;
+    saveMachines();
+    syncRoomViews();
     _nextLocalId = state.reservations.reduce((m, r) => Math.max(m, r._id || 0), 0) + 1;
     saveReservations(state.reservations);
     setStatus('');

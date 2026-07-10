@@ -17,6 +17,11 @@ function loadEnv() {
 }
 loadEnv();
 
+// 改修(起動連携): 凡例色リストCSVのパスと行数上限を設定
+// 本番環境ではサーバーPC上の絶対パスを LEGEND_CSV_PATH に指定すること
+const CSV_PATH     = process.env.LEGEND_CSV_PATH || path.join(__dirname, '../凡例色リスト.csv');
+const CSV_MAX_ROWS = parseInt(process.env.LEGEND_CSV_MAX || '500', 10);
+
 const PORT        = parseInt(process.env.PORT || '3000');
 const IS_DUMMY    = !process.env.SITE_URL;   // 改修(SP連携マージ): Python方式ではSITE_URLで接続有無を判定
 const FRONTEND    = path.join(__dirname, '../frontend');
@@ -255,9 +260,212 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 改修(起動連携): GET /api/legend-colors — 凡例色リストCSVを配列として返す
+  if (pathname === '/api/legend-colors' && method === 'GET') {
+    try {
+      jsonOk(res, parseLegendCsv());
+    } catch (e) {
+      console.error('GET /api/legend-colors:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(起動連携): POST /api/legend-colors — 凡例色リストCSVに行を追記/上書き
+  if (pathname === '/api/legend-colors' && method === 'POST') {
+    try {
+      const body = await readBody(req);
+      appendLegendCsv(body);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('POST /api/legend-colors:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(起動連携): DELETE /api/legend-colors?machine=&start=&end= — 凡例色リストCSVの該当行を削除
+  if (pathname === '/api/legend-colors' && method === 'DELETE') {
+    try {
+      const machine = urlObj.searchParams.get('machine') || '';
+      const start   = urlObj.searchParams.get('start')   || '';
+      const end     = urlObj.searchParams.get('end')     || '';
+      deleteLegendCsv(machine, start, end);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('DELETE /api/legend-colors:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
   // ── 静的ファイル配信 ──
   serveStatic(req, res, pathname);
 });
+
+// ────────────────────────────────────────────
+// 改修(起動連携): 凡例色リストCSV ヘルパー
+// CSVスキーマ（11列）:
+//   タイトル,StartDate,EndDate,ProjectName,Color,BorrowerName,
+//   ApplicantName,Status,LegendId,Remark,Marks
+// 突合キー: タイトル(machine) + StartDate(start) + EndDate(end)
+// ────────────────────────────────────────────
+
+const CSV_HEADERS = [
+  'タイトル', 'StartDate', 'EndDate', 'ProjectName', 'Color', 'BorrowerName',
+  'ApplicantName', 'Status', 'LegendId', 'Remark', 'Marks',
+];
+
+// 日付変換: YYYY/MM/DD → YYYY-MM-DD（ISO）
+function csvDateToIso(s) {
+  if (!s) return '';
+  return s.replace(/\//g, '-');
+}
+// 日付変換: YYYY-MM-DD（ISO） → YYYY/MM/DD
+function isoDateToCsv(s) {
+  if (!s) return '';
+  return s.split('T')[0].replace(/-/g, '/');
+}
+// CSV値のクォート除去（"foo" → foo、内部の"" → "）
+function unquote(s) {
+  if (!s) return '';
+  s = s.trim();
+  if (s.startsWith('"') && s.endsWith('"')) {
+    return s.slice(1, -1).replace(/""/g, '"');
+  }
+  return s;
+}
+// CSV値をクォート付き文字列に変換（" → ""）
+function quoteVal(v) {
+  return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+}
+// 1行のCSV文字列を値配列に分割（カンマ区切り・クォート対応）
+function splitCsvLine(line) {
+  const vals = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQ) {
+      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (c === '"') { inQ = false; }
+      else cur += c;
+    } else {
+      if (c === '"') { inQ = true; }
+      else if (c === ',') { vals.push(cur); cur = ''; }
+      else cur += c;
+    }
+  }
+  vals.push(cur);
+  return vals;
+}
+
+// CSVを読み込み行オブジェクト配列を返す（ファイル無しは []）
+function parseLegendCsv() {
+  let raw;
+  try {
+    raw = fs.readFileSync(CSV_PATH, 'utf8');
+  } catch (_) {
+    return [];
+  }
+  // 改修(文字コード): UTF-8 BOM（U+FEFF）が付いている場合は除去してから分割
+  const lines = raw.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim() !== '');
+  if (lines.length < 1) return [];
+  // ヘッダ行はスキップ
+  const result = [];
+  for (let i = 1; i < lines.length; i++) {
+    const vals = splitCsvLine(lines[i]);
+    const machine    = unquote(vals[0] || '');
+    const startRaw   = unquote(vals[1] || '');
+    const endRaw     = unquote(vals[2] || '');
+    const project    = unquote(vals[3] || '');
+    const color      = unquote(vals[4] || '');
+    const borrower   = unquote(vals[5] || '');
+    const applicant  = unquote(vals[6] || '');
+    const status     = unquote(vals[7] || '') || 'normal';
+    const legendId   = unquote(vals[8] || '');
+    const remark     = unquote(vals[9] || '');
+    let   marks      = [];
+    try { marks = JSON.parse(unquote(vals[10] || '') || '[]'); } catch (_) {}
+    result.push({
+      machine,
+      start:     csvDateToIso(startRaw),
+      end:       csvDateToIso(endRaw),
+      project,
+      color,
+      borrower,
+      applicant,
+      status,
+      legendId,
+      remark,
+      marks,
+    });
+  }
+  return result;
+}
+
+// 行オブジェクト配列をCSVファイルに書き戻す
+function writeLegendCsv(rows) {
+  const headerLine = CSV_HEADERS.map(quoteVal).join(',');
+  const dataLines  = rows.map(r => [
+    quoteVal(r.machine   || ''),
+    quoteVal(isoDateToCsv(r.start   || '')),
+    quoteVal(isoDateToCsv(r.end     || '')),
+    quoteVal(r.project   || ''),
+    quoteVal(r.color     || ''),
+    quoteVal(r.borrower  || ''),
+    quoteVal(r.applicant || ''),
+    quoteVal(r.status    || 'normal'),
+    quoteVal(r.legendId  || ''),
+    quoteVal(r.remark    || ''),
+    quoteVal(JSON.stringify(r.marks || [])),
+  ].join(','));
+  // 改修(文字コード): UTF-8 BOMを先頭に付与（日本語Windowsのアプリが文字化けしないよう）
+  const bom = '﻿';
+  fs.writeFileSync(CSV_PATH, bom + [headerLine, ...dataLines].join('\r\n') + '\r\n', 'utf8');
+}
+
+// 突合キーを生成（machine|start|end）
+function csvKey(machine, start, end) {
+  return `${machine}|${(start || '').split('T')[0]}|${(end || '').split('T')[0]}`;
+}
+
+// 同一 machine+start+end があれば上書き、無ければ追記。満杯時は先頭行を削除
+function appendLegendCsv(row) {
+  const rows = parseLegendCsv();
+  const key  = csvKey(row.machine, row.start, row.end);
+  const idx  = rows.findIndex(r => csvKey(r.machine, r.start, r.end) === key);
+  const newRow = {
+    machine:   row.machine   || '',
+    start:     (row.start    || '').split('T')[0],
+    end:       (row.end      || '').split('T')[0],
+    project:   row.project   || '',
+    color:     row.color     || '#fde68a',
+    borrower:  row.borrower  || '',
+    applicant: row.applicant || '',
+    status:    row.status    || 'normal',
+    legendId:  row.legendId  || '',
+    remark:    row.remark    || '',
+    marks:     Array.isArray(row.marks) ? row.marks : [],
+  };
+  if (idx >= 0) {
+    rows[idx] = newRow;  // 上書き
+  } else {
+    rows.push(newRow);   // 追記
+    // 行数上限を超えた場合は古い先頭行から削除
+    while (rows.length > CSV_MAX_ROWS) rows.shift();
+  }
+  writeLegendCsv(rows);
+}
+
+// 同一 machine+start+end の行を削除して書き戻す（該当無しは何もしない）
+function deleteLegendCsv(machine, start, end) {
+  const rows    = parseLegendCsv();
+  const key     = csvKey(machine, start, end);
+  const filtered = rows.filter(r => csvKey(r.machine, r.start, r.end) !== key);
+  if (filtered.length !== rows.length) {
+    writeLegendCsv(filtered);
+  }
+}
 
 // 改修(第13回): SP列名変換を統合HILS使用履歴リストの実内部名に差替え
 // field_1=設備, field_6=設備使用開始日, field_7=設備使用終了日,
