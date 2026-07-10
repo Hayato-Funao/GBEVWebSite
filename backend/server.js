@@ -491,8 +491,10 @@ function normalizeSpItem(item) {
     start:   extractDate(item.field_6),
     end:     extractDate(item.field_7),
     label:   item.Title                                         || '',
-    color:   '#fde68a',  // 使用履歴リストにcolor列なし → UI固定値
-    user:    item['OData__x7533__x8acb__x8005__x540d_']         || '',
+    color:    '#fde68a',  // 使用履歴リストにcolor列なし → UI固定値
+    user:     item['OData__x7533__x8acb__x8005__x540d_']        || '',
+    // 改修: 使用履歴リストに新規追加された借用者名列を取得（承知/辞退ページで表示）
+    borrower: item['OData__x501f__x7528__x8005__x540d_']        || '',
   };
 }
 

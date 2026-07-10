@@ -2652,6 +2652,35 @@ function mapLegacyMachine(name) {
 }
 
 // ────────────────────────────────────────────
+// 改修: 承知/辞退ページの予約内容欄にデータを反映する（機種名/借用者/開始日/終了日）
+// ────────────────────────────────────────────
+function renderAcceptInfo() {
+	// state.reservations から actionHilsId で突合（主キー）
+	let r = null;
+	if (state.actionHilsId != null) {
+		r = state.reservations.find(x => x.spId === state.actionHilsId);
+	}
+	// フォールバック: actionリストの機種呼称と使用履歴の機種名/ラベルで突合
+	if (!r && state.autoFill && state.autoFill.label) {
+		r = state.reservations.find(x =>
+			x.machine === state.autoFill.label || x.label === state.autoFill.label);
+	}
+	// start/end はサーバ側 extractDate で既に YYYY-MM-DD 形式（整形不要）
+	const machineName = r ? r.machine              : (state.autoFill ? state.autoFill.label : '');
+	const borrower    = r ? (r.borrower || '')      : '';
+	const start       = r ? r.start                : '';
+	const end         = r ? r.end                  : '';
+	document.getElementById('accept-info-label').textContent = machineName || '−';
+	document.getElementById('accept-info-user').textContent  = borrower    || '−';
+	document.getElementById('accept-info-start').textContent = start       || '−';
+	document.getElementById('accept-info-end').textContent   = end         || '−';
+	// 改修: 変更依頼フォームの日付入力に現在の予約日を初期セット（YYYY-MM-DD は date 入力にそのまま使用可）
+	const si = document.getElementById('accept-new-start');
+	const ei = document.getElementById('accept-new-end');
+	if (si && start) si.value = start;
+	if (ei && end)   ei.value = end;
+}
+
 // 初期化
 // ────────────────────────────────────────────
 async function init() {
@@ -2752,6 +2781,8 @@ async function init() {
         status:    csv.status   || ex.status   || 'normal',
         remark:    csv.remark   || ex.remark   || '',
         marks:     (csv.marks && csv.marks.length > 0) ? csv.marks : (ex.marks || []),
+        // 改修: 借用者名列（使用履歴リスト新規追加）をSPから取得（承知/辞退ページで表示）
+        borrower:  res.borrower || '',
         // 改修(起動連携): 使用履歴リストの予約は南ルームに固定（西ルームではない）
         room:      'south',
       };
@@ -2765,6 +2796,8 @@ async function init() {
     syncRoomViews();
     _nextLocalId = state.reservations.reduce((m, r) => Math.max(m, r._id || 0), 0) + 1;
     saveReservations(state.reservations);
+    // 改修: 承知/辞退ページの場合は予約内容欄を反映する
+    if (_acceptMode) renderAcceptInfo();
     setStatus('');
   } else {
     // SP取得失敗: localStorageへフォールバック（fetchReservations内でエラー表示済み）
