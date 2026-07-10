@@ -274,6 +274,8 @@ const state = {
   formMode:      null,  // 改修: サイドパネル表示中のモード('register'|'edit'|'view'|null)
   // 改修(第12回): 起動時に取得した事務局アクションリストのID（W-6）
   actionItemId:  null,
+  // 改修(第14回): 辞退時の使用履歴行削除用に保持するSP内部ID
+  actionHilsId:  null,
   // 改修(第12回): URLパラメータ経由の自動記入用データ（W-4）
   autoFill:      null,
 };
@@ -374,6 +376,18 @@ function startForBizDays(endDate, n) {
     }
     d.setDate(d.getDate() - 1);
   }
+}
+
+// ────────────────────────────────────────────
+// メール送信ヘルパ（改修(第14回): /api/mail 経由でGraph API /me/sendMail を呼び出す）
+// ────────────────────────────────────────────
+async function sendMail(to, subject, body) {
+  const res = await fetch('/api/mail', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ to, subject, body }),
+  });
+  if (!res.ok) throw new Error(await res.text());
 }
 
 // ────────────────────────────────────────────
@@ -1680,7 +1694,8 @@ document.getElementById('info-extend-btn').addEventListener('click', () => {
   state.formMode = null;  // 改修: 期間変更申請中は日付自動連動を無効
 });
 
-document.getElementById('ext-ok').addEventListener('click', () => {
+// 改修(第14回): async に変更（await sendMail 等を使用するため）
+document.getElementById('ext-ok').addEventListener('click', async () => {
   const startVal  = document.getElementById('ext-start').value;
   const endVal    = document.getElementById('ext-end').value;
   const reasonVal = document.getElementById('ext-reason').value.trim();
@@ -1693,9 +1708,35 @@ document.getElementById('ext-ok').addEventListener('click', () => {
     alert('変更後終了日が変更後開始日より前です');
     return;
   }
-  alert('申請処理は未実装です');
-  // 改修: extend-paneを閉じてプレースホルダを表示
-  closeFormPane();
+  // 改修(第14回): 希望終了日・申請理由をSPにPATCH＋ステータスを9.期間変更申請中に更新＋PMO通知 W-10
+  const pmoAddress = 'hayato_funao_gst@jp.honda'; // 動作確認用。確認後は PMO の正式アドレスに変更すること
+  const extId = state.actionItemId;  // 第12回で保持したSP内部ID
+  try {
+    if (extId) {
+      // ① アクションリストへ期間変更申請データをPATCH
+      await fetch(`/api/action-item/${extId}/extend`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ newStart: startVal, newEnd: endVal, reason: reasonVal }),
+      });
+    }
+    // ② PMOへ期間変更申請通知メール
+    const changeType = startVal ? '開始日・終了日の変更' : '終了日の変更';
+    await sendMail(
+      pmoAddress,
+      '【統合HILS予約】期間変更申請',
+      `PMO各位\n\n申請者から期間変更申請が届きました。（${changeType}）\n\n` +
+      (startVal ? `変更後開始日：${startVal}\n` : '') +
+      `変更後終了日：${endVal}\n変更理由：${reasonVal}\n\n` +
+      `ステータスは「9.期間変更申請中」に更新されました。\n対応後は使用履歴リストを更新し、ステータスを戻してください。\n\nURL: ${location.origin}/?user=admin`
+    );
+    setStatus('期間変更申請を送信しました。PMOへ通知しました。');
+    // 改修: extend-paneを閉じてプレースホルダを表示
+    closeFormPane();
+  } catch (e) {
+    console.error('期間変更申請エラー:', e);
+    setStatus('期間変更申請の送信に失敗しました', 'red');
+  }
 });
 document.getElementById('ext-cancel').addEventListener('click', () => {
   // 改修: extend-paneを閉じてプレースホルダを表示
@@ -1711,11 +1752,29 @@ document.getElementById('info-cancel-btn').addEventListener('click', () => {
   alert('利用取消依頼の送信処理は未実装です');
 });
 
-// 改修: 利用終了報告ボタンのクリックハンドラ（使用者モード。事務局への送信処理は未実装）
-document.getElementById('info-report-btn').addEventListener('click', () => {
+// 改修(第15回): 利用終了報告ボタンのクリックハンドラ（使用者モード）W-17
+// 事務局へ利用終了報告メールを送信する
+document.getElementById('info-report-btn').addEventListener('click', async () => {
   if (!confirm('この予約の利用終了を報告しますか？')) return;
-  // TODO: 事務局へ利用終了報告メール送信を実装
-  alert('利用終了報告の送信処理は未実装です');
+  // 動作確認用: 宛先を固定。確認後は PMO の正式アドレスに変更すること
+  const pmoAddress = 'hayato_funao_gst@jp.honda';
+  // 選択中の予約（state.selectedResId はインデックス）
+  const reportRes = state.selectedResId != null ? state.reservations[state.selectedResId] : null;
+  // 事務局用URL
+  const appUrl = `${location.origin}/?user=admin`;
+  try {
+    await sendMail(
+      pmoAddress,
+      '【統合HILS予約】利用終了報告',
+      `PMO各位\n\n下記予約の利用終了を報告します。\n\n` +
+      (reportRes ? `筐体：${reportRes.machine}\n期間：${reportRes.start} 〜 ${reportRes.end}\n` : '') +
+      `\n予約管理表URL（事務局用）：${appUrl}\n利用終了処理をお願いします。`
+    );
+    setStatus('利用終了報告を送信しました。PMOへ通知しました。');
+  } catch (e) {
+    console.error('利用終了報告エラー:', e);
+    setStatus('利用終了報告の送信に失敗しました', 'red');
+  }
 });
 
 
@@ -1725,30 +1784,91 @@ document.getElementById('manual-btn').addEventListener('click', () => {
   setStatus('マニュアルは準備中です');
 });
 
-// 改修: 承知/辞退ページのボタンハンドラ（送信処理は未実装・UIガワのみ）
-document.getElementById('accept-change-btn').addEventListener('click', () => {
+// 改修(第14回): 承知/辞退ページのボタンハンドラ — 実処理に置換（W-9）
+// 変更依頼ボタン: PMOへ予約内容変更依頼メール送信
+document.getElementById('accept-change-btn').addEventListener('click', async () => {
   const reason = document.getElementById('accept-change-reason').value.trim();
   if (!reason) {
     alert('変更理由を入力してください');
     return;
   }
-  // TODO: PMOへ予約内容変更依頼メール送信を実装
-  alert('変更依頼の送信処理は未実装です');
+  const pmoAddress = 'hayato_funao_gst@jp.honda'; // 動作確認用。確認後は PMO の正式アドレスに変更すること
+  try {
+    await sendMail(
+      pmoAddress,
+      '【統合HILS予約】予約内容変更依頼',
+      `PMO各位\n\n下記案件の予約内容変更を依頼します。\n\n変更理由：${reason}\n\n確認のうえ、WEBアプリにて対応をお願いします。\nURL: ${location.origin}/?user=admin`
+    );
+    setStatus('変更依頼を送信しました');
+    document.getElementById('accept-change-reason').value = '';
+  } catch (e) {
+    console.error('変更依頼メール送信エラー:', e);
+    setStatus('変更依頼の送信に失敗しました', 'red');
+  }
 });
 
-document.getElementById('accept-ok-btn').addEventListener('click', () => {
-  // TODO: 事務局アクションリストへの「承知」記録・PMOへ承知メール送信を実装
-  alert('承知処理は未実装です');
+// 承知ボタン: 事務局アクションリストへ「承知」記録＋PMOへ承知メール
+// 承知時はステータス変更しない（1.仮申請受領を維持）
+document.getElementById('accept-ok-btn').addEventListener('click', async () => {
+  const pmoAddress = 'hayato_funao_gst@jp.honda'; // 動作確認用。確認後は PMO の正式アドレスに変更すること
+  // URLのidはTitle値のため、SP内部IDを保持したstate.actionItemIdを使用する
+  const acceptId = state.actionItemId;  // 第12回で保持したSP内部ID
+  try {
+    if (acceptId) {
+      // ① アクションリストの承知/辞退列を「承知」に更新
+      await fetch(`/api/action-item/${acceptId}/accept`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ acceptStatus: '承知' }),
+      });
+    }
+    // ② PMOへ承知メール送信
+    await sendMail(
+      pmoAddress,
+      '【統合HILS予約】使用条件の承知',
+      `PMO各位\n\n申請者が使用条件を承知しました。\n使用開始へ向けて対応をお願いします。\n\nURL: ${location.href}`
+    );
+    setStatus('承知しました。PMOへ通知を送信しました。');
+  } catch (e) {
+    console.error('承知処理エラー:', e);
+    setStatus('承知処理に失敗しました', 'red');
+  }
 });
 
-document.getElementById('accept-reject-btn').addEventListener('click', () => {
-  const reason = document.getElementById('accept-reject-reason').value.trim();
-  if (!reason) {
+// 辞退ボタン: ステータスを91.申請者取り下げに更新＋使用履歴リスト削除＋PMOへ辞退メール
+document.getElementById('accept-reject-btn').addEventListener('click', async () => {
+  const rejectReason = document.getElementById('accept-reject-reason').value.trim();
+  if (!rejectReason) {
     alert('辞退理由を入力してください');
     return;
   }
-  // TODO: ステータス更新（91.申請者取り下げ）・HILS使用履歴リスト削除・PMOへ辞退メール送信を実装
-  alert('辞退処理は未実装です');
+  const pmoAddress = 'hayato_funao_gst@jp.honda'; // 動作確認用。確認後は PMO の正式アドレスに変更すること
+  // URLのidはTitle値のため、SP内部IDを保持したstate.actionItemIdを使用する
+  const rejectId = state.actionItemId;  // 第12回で保持したSP内部ID
+  try {
+    if (rejectId) {
+      // ① アクションリストのステータスを「91.申請者取り下げ」に更新（既存ルート活用）
+      await fetch(`/api/action-item/${rejectId}/status`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ status: '91.申請者取り下げ' }),
+      });
+      // ② 統合HILS使用履歴リストから当該行を削除（突合成功時のみ。失敗時は辞退処理を継続）
+      if (state.actionHilsId) {
+        await fetch(`/api/reservations/${state.actionHilsId}`, { method: 'DELETE' });
+      }
+    }
+    // ③ PMOへ辞退メール送信
+    await sendMail(
+      pmoAddress,
+      '【統合HILS予約】使用条件の辞退',
+      `PMO各位\n\n申請者が使用条件を辞退しました。\n\n辞退理由：${rejectReason}\n\nステータスは「91.申請者取り下げ」に更新されました。`
+    );
+    setStatus('辞退しました。PMOへ通知を送信しました。');
+  } catch (e) {
+    console.error('辞退処理エラー:', e);
+    setStatus('辞退処理に失敗しました', 'red');
+  }
 });
 
 function deleteReservation(resId) {
@@ -2270,11 +2390,43 @@ function showDialog(title, data, mode, resId = null) {
       closeFormPane();
     }
   };
-  // 改修: 利用終了ボタン（事務局モード・編集時のみ表示。ステータス更新処理は未実装）
-  terminateBtn.onclick = () => {
+  // 改修(第15回): 利用終了ボタン（事務局モード・編集時のみ表示）W-18
+  // ①アクションリストのステータスを「10.利用終了」に更新、②申請者へHILS復帰確認メール送信
+  terminateBtn.onclick = async () => {
     if (!confirm('この予約を利用終了にしますか？')) return;
-    // TODO: 事務局アクションリストのステータスを 10.利用終了 に更新を実装
-    alert('利用終了処理は未実装です');
+    // 動作確認用: 宛先を固定。確認後は state.autoFill && state.autoFill.email を使用すること
+    const applicantEmail = 'hayato_funao_gst@jp.honda';
+    // 対象予約（resId は showDialog 第4引数）
+    const terminateRes = resId != null ? state.reservations[resId] : null;
+    try {
+      // ① アクションリストのステータスを「10.利用終了」に更新（既存ルート再利用）
+      if (state.actionItemId) {
+        const r = await fetch(`/api/action-item/${state.actionItemId}/status`, {
+          method:  'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ status: '10.利用終了' }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          console.error('利用終了ステータス更新失敗:', err);
+          setStatus(`ステータス更新に失敗しました: ${err.error || r.status}`, 'red');
+          return;
+        }
+      }
+      // ② 申請者へHILS復帰確認メールを送信
+      await sendMail(
+        applicantEmail,
+        '【統合HILS予約】HILS復帰確認のお願い',
+        `お世話になります。\n\n下記HILSの利用終了が登録されました。\n` +
+        (terminateRes ? `筐体：${terminateRes.machine}\n期間：${terminateRes.start} 〜 ${terminateRes.end}\n\n` : '\n') +
+        `HILSを正常に復帰させていただきましたか？\n問題がある場合はPMOへご連絡ください。\n\nよろしくお願いします。`
+      );
+      setStatus('利用終了処理が完了しました。申請者へ復帰確認メールを送信しました。');
+      closeFormPane();
+    } catch (e) {
+      console.error('利用終了処理エラー:', e);
+      setStatus('利用終了処理に失敗しました', 'red');
+    }
   };
 }
 
@@ -2323,6 +2475,17 @@ async function init() {
       const actionItem = await fetch(`/api/action-item/${encodeURIComponent(_actionId)}`).then(r => r.json());
       // 改修(第12回): PATCH対象はアクションリストのSP内部ID。Title値ではなく取得行のIdを保持する（W-6）
       state.actionItemId = actionItem.id;
+      // 改修(第14回): 辞退時の使用履歴削除用に、対応する使用履歴行のSP idを特定して保持
+      // 突合キー: label（machineType）+ user（email）。一致しなければ削除はスキップする（辞退処理自体は継続）
+      state.actionHilsId = null;
+      try {
+        const _list = await fetch('/api/reservations').then(r => r.json());
+        const _hit  = _list.find(x =>
+          x.label === (actionItem.machineType || '') &&
+          (!actionItem.email || x.user === actionItem.email)
+        );
+        if (_hit) state.actionHilsId = _hit.id;
+      } catch (_) { /* 突合失敗は無視。辞退処理継続 */ }
       // 改修(第12回): 分類によるルーム自動切替 W-3（南HILSのみ有効化）
       if (actionItem.category === '統合HILS利用') {
         state.currentRoom = 'south';

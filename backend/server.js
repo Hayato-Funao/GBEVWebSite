@@ -111,6 +111,50 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 改修(第14回): PATCH /api/action-item/:id/accept — 事務局アクションリストの承知/辞退列を更新 W-9
+  const acceptMatch = pathname.match(/^\/api\/action-item\/(\d+)\/accept$/);
+  if (acceptMatch && method === 'PATCH') {
+    if (IS_DUMMY) return jsonOk(res, { success: true, dummy: true });
+    try {
+      const { acceptStatus } = await readBody(req);  // '承知' or '辞退'
+      await sp.runCommand('update_action_accept', [acceptMatch[1], acceptStatus]);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('PATCH /api/action-item/accept:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(第14回): PATCH /api/action-item/:id/extend — 期間変更申請データをSPに記録 W-10
+  const extendMatch = pathname.match(/^\/api\/action-item\/(\d+)\/extend$/);
+  if (extendMatch && method === 'PATCH') {
+    if (IS_DUMMY) return jsonOk(res, { success: true, dummy: true });
+    try {
+      const { newEnd, reason, newStart } = await readBody(req);
+      await sp.runCommand('update_action_extend', [extendMatch[1], newEnd, reason, newStart || '']);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('PATCH /api/action-item/extend:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(第14回): POST /api/mail — Graph API /me/sendMail 経由でメール送信
+  if (pathname === '/api/mail' && method === 'POST') {
+    if (IS_DUMMY) return jsonOk(res, { success: true, dummy: true });
+    try {
+      const { to, subject, body } = await readBody(req);
+      await sp.runCommand('send_mail', [to, subject, body]);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('POST /api/mail:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
   // 改修(第13回): PATCH /api/action-item/:id/status — 事務局アクションリストのステータス更新 W-5/W-12
   const actionStatusMatch = pathname.match(/^\/api\/action-item\/(\d+)\/status$/);
   if (actionStatusMatch && method === 'PATCH') {
