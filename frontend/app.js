@@ -392,6 +392,24 @@ async function sendMail(to, subject, body) {
   if (!res.ok) throw new Error(await res.text());
 }
 
+// 改修(メール文面): PMOアドレス（署名の窓口・PMO宛先で共用。確認後に正式値へ変更すること）
+const MAIL_PMO_ADDRESS = 'hayato_funao_gst@jp.honda';
+
+// 改修(メール文面): 共通件名ビルダ。筐体名があれば末尾に＜筐体名＞を付与
+function buildMailSubject(title, machine) {
+	const suffix = machine ? `＜${machine}＞` : '';
+	return `【統合HILS（61号棟南HILSルーム）予約】${title}${suffix}`;
+}
+
+// 改修(メール文面): 全メール末尾の共通署名ブロック
+function mailSignature() {
+	return `\n────────────────────\n` +
+		`統合HILS予約管理表事務局\n` +
+		`お問い合わせ: ${MAIL_PMO_ADDRESS}\n` +
+		`予約管理表: ${location.origin}/\n` +
+		`────────────────────`;
+}
+
 // ────────────────────────────────────────────
 // ステータス表示
 // ────────────────────────────────────────────
@@ -1761,7 +1779,6 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
     return;
   }
   // 改修(第14回): 希望終了日・申請理由をSPにPATCH＋ステータスを9.期間変更申請中に更新＋PMO通知 W-10
-  const pmoAddress = 'hayato_funao_gst@jp.honda'; // 動作確認用。確認後は PMO の正式アドレスに変更すること
   const extId = state.actionItemId;  // 第12回で保持したSP内部ID
   try {
     if (extId) {
@@ -1772,15 +1789,25 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
         body:    JSON.stringify({ newStart: startVal, newEnd: endVal, reason: reasonVal }),
       });
     }
-    // ② PMOへ期間変更申請通知メール
-    const changeType = startVal ? '開始日・終了日の変更' : '終了日の変更';
+    // ② PMOへ期間変更申請通知メール（改修(メール文面): 提案資料⑤に合わせて件名・本文を更新）
+    const curRes     = state.actionHilsRes || (state.selectedResId != null ? state.reservations[state.selectedResId] : null);
+    const extMachine = curRes?.machine || '';
+    const curStart   = curRes?.start   || '';
+    const curEnd     = curRes?.end     || '';
     await sendMail(
-      pmoAddress,
-      '【統合HILS予約】期間変更申請',
-      `PMO各位\n\n申請者から期間変更申請が届きました。（${changeType}）\n\n` +
-      (startVal ? `変更後開始日：${startVal}\n` : '') +
-      `変更後終了日：${endVal}\n変更理由：${reasonVal}\n\n` +
-      `ステータスは「9.期間変更申請中」に更新されました。\n対応後は使用履歴リストを更新し、ステータスを戻してください。\n\nURL: ${location.origin}/?user=admin`
+      MAIL_PMO_ADDRESS,
+      buildMailSubject('期間変更申請の通知', extMachine),
+      `PMO ご担当者 様\n\n` +
+      `下記予約について、申請者より期間変更の申請がありました。\n\n` +
+      `■対象予約\n` +
+      ` 予約ID  : ${state.actionTitleId}\n` +
+      ` 筐体名  : ${extMachine}\n` +
+      (curStart || curEnd ? ` 現在の期間: ${curStart} 〜 ${curEnd}\n` : '') +
+      `\n■申請された貸出期間\n` +
+      ` 変更後期間: ${startVal || curStart} 〜 ${endVal}\n` +
+      `\n■変更理由\n` +
+      ` ${reasonVal}` +
+      mailSignature()
     );
     setStatus('期間変更申請を送信しました。PMOへ通知しました。');
     // 改修: extend-paneを閉じてプレースホルダを表示
@@ -1797,30 +1824,59 @@ document.getElementById('ext-cancel').addEventListener('click', () => {
 
 // 改修(マージ): info-xpx-btn は撤去のためリスナ削除
 
-// 改修: 利用取消依頼ボタンのクリックハンドラ（PMOへの送信処理は未実装）
-document.getElementById('info-cancel-btn').addEventListener('click', () => {
+// 改修(メール文面): 利用取消依頼ボタン — PMOへ通知メール送信＋ステータスを91.申請者取り下げに更新（⑥）
+document.getElementById('info-cancel-btn').addEventListener('click', async () => {
   if (!confirm('この予約の利用取消を依頼しますか？')) return;
-  // TODO: PMOへ利用取消依頼メール送信・ステータス更新（91.申請者取り下げ）を実装
-  alert('利用取消依頼の送信処理は未実装です');
+  const cancelRes     = state.selectedResId != null ? state.reservations[state.selectedResId] : null;
+  const cancelMachine = cancelRes?.machine || '';
+  try {
+    // ① ステータスを「91.申請者取り下げ」に更新（actionItemId がある場合のみ）
+    if (state.actionItemId) {
+      await fetch(`/api/action-item/${state.actionItemId}/status`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ status: '91.申請者取り下げ' }),
+      });
+    }
+    // ② PMOへ利用取消依頼通知メール送信
+    await sendMail(
+      MAIL_PMO_ADDRESS,
+      buildMailSubject('利用取消依頼の通知', cancelMachine),
+      `PMO ご担当者 様\n\n` +
+      `下記予約について、申請者より利用取消の依頼がありました。\n\n` +
+      `■対象予約\n` +
+      ` 予約ID  : ${state.actionTitleId}\n` +
+      ` 筐体名  : ${cancelMachine}\n` +
+      (cancelRes ? ` 現在の貸出期間: ${cancelRes.start} 〜 ${cancelRes.end}\n` : '') +
+      mailSignature()
+    );
+    setStatus('利用取消依頼を送信しました。PMOへ通知しました。');
+  } catch (e) {
+    console.error('利用取消依頼エラー:', e);
+    setStatus('利用取消依頼の送信に失敗しました', 'red');
+  }
 });
 
 // 改修(第15回): 利用終了報告ボタンのクリックハンドラ（使用者モード）W-17
 // 事務局へ利用終了報告メールを送信する
 document.getElementById('info-report-btn').addEventListener('click', async () => {
   if (!confirm('この予約の利用終了を報告しますか？')) return;
-  // 動作確認用: 宛先を固定。確認後は PMO の正式アドレスに変更すること
-  const pmoAddress = 'hayato_funao_gst@jp.honda';
   // 選択中の予約（state.selectedResId はインデックス）
   const reportRes = state.selectedResId != null ? state.reservations[state.selectedResId] : null;
-  // 事務局用URL
-  const appUrl = `${location.origin}/?user=admin`;
   try {
+    // 改修(メール文面): 提案資料⑦に合わせて件名・本文を更新
     await sendMail(
-      pmoAddress,
-      '【統合HILS予約】利用終了報告',
-      `PMO各位\n\n下記予約の利用終了を報告します。\n\n` +
-      (reportRes ? `筐体：${reportRes.machine}\n期間：${reportRes.start} 〜 ${reportRes.end}\n` : '') +
-      `\n予約管理表URL（事務局用）：${appUrl}\n利用終了処理をお願いします。`
+      MAIL_PMO_ADDRESS,
+      buildMailSubject('利用終了報告', reportRes?.machine || ''),
+      `PMO ご担当者 様\n\n` +
+      `下記予約について、使用者より利用終了の報告がありました。\n` +
+      `HILSの初期状態復帰の確認をお願いします。\n\n` +
+      `■対象予約\n` +
+      ` 予約ID  : ${state.actionTitleId}\n` +
+      (reportRes
+        ? ` 筐体名  : ${reportRes.machine}\n 貸出期間 : ${reportRes.start} 〜 ${reportRes.end}\n`
+        : '') +
+      mailSignature()
     );
     setStatus('利用終了報告を送信しました。PMOへ通知しました。');
   } catch (e) {
@@ -1844,12 +1900,29 @@ document.getElementById('accept-change-btn').addEventListener('click', async () 
     alert('変更理由を入力してください');
     return;
   }
-  const pmoAddress = 'hayato_funao_gst@jp.honda'; // 動作確認用。確認後は PMO の正式アドレスに変更すること
+  // 改修(メール文面): 希望期間入力（#accept-new-start/#accept-new-end）を取得
+  const newStart = document.getElementById('accept-new-start').value;
+  const newEnd   = document.getElementById('accept-new-end').value;
   try {
+    // 改修(メール文面): 提案資料②に合わせて件名・本文を更新
+    const chgMachine = state.actionHilsRes?.machine || '';
     await sendMail(
-      pmoAddress,
-      '【統合HILS予約】予約内容変更依頼',
-      `PMO各位\n\n下記案件の予約内容変更を依頼します。\n\n変更理由：${reason}\n\n確認のうえ、WEBアプリにて対応をお願いします。\nURL: ${location.origin}/?user=admin`
+      MAIL_PMO_ADDRESS,
+      buildMailSubject('予約内容変更のご依頼', chgMachine),
+      `PMO ご担当者 様\n\n` +
+      `下記予約について、申請者より使用期間の変更依頼がありました。\n\n` +
+      `■対象予約\n` +
+      ` 予約ID  : ${state.actionTitleId}\n` +
+      ` 筐体名  : ${chgMachine}\n` +
+      (state.actionHilsRes
+        ? ` 現在の期間: ${state.actionHilsRes.start} 〜 ${state.actionHilsRes.end}\n`
+        : '') +
+      `\n■変更希望\n` +
+      (newStart || newEnd
+        ? ` 希望期間 : ${newStart || '（変更なし）'} 〜 ${newEnd || '（変更なし）'}\n`
+        : '') +
+      ` 変更理由 : ${reason}` +
+      mailSignature()
     );
     setStatus('変更依頼を送信しました');
     document.getElementById('accept-change-reason').value = '';
@@ -1862,7 +1935,6 @@ document.getElementById('accept-change-btn').addEventListener('click', async () 
 // 承知ボタン: 事務局アクションリストへ「承知」記録＋PMOへ承知メール
 // 承知時はステータス変更しない（1.仮申請受領を維持）
 document.getElementById('accept-ok-btn').addEventListener('click', async () => {
-  const pmoAddress = 'hayato_funao_gst@jp.honda'; // 動作確認用。確認後は PMO の正式アドレスに変更すること
   // URLのidはTitle値のため、SP内部IDを保持したstate.actionItemIdを使用する
   const acceptId = state.actionItemId;  // 第12回で保持したSP内部ID
   try {
@@ -1874,11 +1946,20 @@ document.getElementById('accept-ok-btn').addEventListener('click', async () => {
         body:    JSON.stringify({ acceptStatus: '承知' }),
       });
     }
-    // ② PMOへ承知メール送信
+    // ② PMOへ承知メール送信（改修(メール文面): 提案資料③に合わせて件名・本文を更新）
+    const okMachine = state.actionHilsRes?.machine || '';
     await sendMail(
-      pmoAddress,
-      '【統合HILS予約】使用条件の承知',
-      `PMO各位\n\n申請者が使用条件を承知しました。\n使用開始へ向けて対応をお願いします。\n\nURL: ${location.href}`
+      MAIL_PMO_ADDRESS,
+      buildMailSubject('使用承知の通知', okMachine),
+      `PMO ご担当者 様\n\n` +
+      `下記予約について、申請者より使用を「承知」する旨の回答がありました。\n\n` +
+      `■対象予約\n` +
+      ` 予約ID : ${state.actionTitleId}\n` +
+      ` 筐体名 : ${okMachine}\n` +
+      (state.actionHilsRes
+        ? ` 使用期間: ${state.actionHilsRes.start} 〜 ${state.actionHilsRes.end}\n`
+        : '') +
+      mailSignature()
     );
     setStatus('承知しました。PMOへ通知を送信しました。');
   } catch (e) {
@@ -1894,7 +1975,6 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
     alert('辞退理由を入力してください');
     return;
   }
-  const pmoAddress = 'hayato_funao_gst@jp.honda'; // 動作確認用。確認後は PMO の正式アドレスに変更すること
   // URLのidはTitle値のため、SP内部IDを保持したstate.actionItemIdを使用する
   const rejectId = state.actionItemId;  // 第12回で保持したSP内部ID
   try {
@@ -1915,11 +1995,23 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
         }
       }
     }
-    // ③ PMOへ辞退メール送信
+    // ③ PMOへ辞退メール送信（改修(メール文面): 提案資料④に合わせて件名・本文を更新）
+    const rejMachine = state.actionHilsRes?.machine || '';
     await sendMail(
-      pmoAddress,
-      '【統合HILS予約】使用条件の辞退',
-      `PMO各位\n\n申請者が使用条件を辞退しました。\n\n辞退理由：${rejectReason}\n\nステータスは「91.申請者取り下げ」に更新されました。`
+      MAIL_PMO_ADDRESS,
+      buildMailSubject('使用辞退の通知', rejMachine),
+      `PMO ご担当者 様\n\n` +
+      `下記予約について、申請者より使用を「辞退」する旨の回答がありました。\n` +
+      `本予約は予約管理表から削除されます。\n\n` +
+      `■対象予約\n` +
+      ` 予約ID : ${state.actionTitleId}\n` +
+      ` 筐体名 : ${rejMachine}\n` +
+      (state.actionHilsRes
+        ? ` 使用期間: ${state.actionHilsRes.start} 〜 ${state.actionHilsRes.end}\n`
+        : '') +
+      `\n■辞退理由\n` +
+      ` ${rejectReason}` +
+      mailSignature()
     );
     setStatus('辞退しました。PMOへ通知を送信しました。');
   } catch (e) {
@@ -2406,6 +2498,29 @@ function showDialog(title, data, mode, resId = null) {
           }
         })();
       }
+      // 改修(メール文面): ①使用確定通知メールを申請者へ送信（?id=起動時のみ）
+      if (state.actionItemId && state.actionTitleId) {
+        (async () => {
+          try {
+            await sendMail(
+              MAIL_PMO_ADDRESS,  // 動作確認用固定。確認後は申請者アドレスへ変更すること
+              buildMailSubject('使用確定のお知らせ（承知・辞退のお願い）', resData.machine),
+              `${state.autoFill?.applicant || ''} 様\n\n` +
+              `ご申請いただいた統合HILSの使用日程が確定しましたのでお知らせします。\n\n` +
+              `■予約情報\n` +
+              ` 予約ID : ${state.actionTitleId}\n` +
+              ` 筐体名 : ${resData.machine}\n` +
+              ` 使用期間: ${resData.start} 〜 ${resData.end}\n\n` +
+              `下記ページより内容をご確認のうえ、「承知」または「辞退」の操作をお願いします。\n` +
+              `使用期間の変更をご希望の場合も、下記ページより変更依頼が可能です。\n\n` +
+              ` 承知・辞退ページ: ${location.origin}/?page=accept&id=${state.actionTitleId}` +
+              mailSignature()
+            );
+          } catch (e) {
+            console.error('使用確定通知メール送信エラー:', e);
+          }
+        })();
+      }
     } else if (mode === 'edit' && resId !== null) {
       // 改修(SP連携マージ): 編集前のspIdを退避してから上書き
       const prevSpId = state.reservations[resId].spId;
@@ -2461,8 +2576,6 @@ function showDialog(title, data, mode, resId = null) {
   // ①アクションリストのステータスを「10.利用終了」に更新、②申請者へHILS復帰確認メール送信
   terminateBtn.onclick = async () => {
     if (!confirm('この予約を利用終了にしますか？')) return;
-    // 動作確認用: 宛先を固定。確認後は state.autoFill && state.autoFill.email を使用すること
-    const applicantEmail = 'hayato_funao_gst@jp.honda';
     // 対象予約（resId は showDialog 第4引数）
     const terminateRes = resId != null ? state.reservations[resId] : null;
     try {
@@ -2480,13 +2593,25 @@ function showDialog(title, data, mode, resId = null) {
           return;
         }
       }
-      // ② 申請者へHILS復帰確認メールを送信
+      // ② 申請者へHILS復帰確認メールを送信（改修(メール文面): 提案資料⑧に合わせて件名・本文を更新）
+      // 動作確認用: 宛先を固定。確認後は申請者アドレスへ変更すること
       await sendMail(
-        applicantEmail,
-        '【統合HILS予約】HILS復帰確認のお願い',
-        `お世話になります。\n\n下記HILSの利用終了が登録されました。\n` +
-        (terminateRes ? `筐体：${terminateRes.machine}\n期間：${terminateRes.start} 〜 ${terminateRes.end}\n\n` : '\n') +
-        `HILSを正常に復帰させていただきましたか？\n問題がある場合はPMOへご連絡ください。\n\nよろしくお願いします。`
+        MAIL_PMO_ADDRESS,
+        buildMailSubject('HILS初期状態復帰のご確認', terminateRes?.machine || ''),
+        `${state.autoFill?.applicant || ''} 様\n\n` +
+        `下記予約の利用終了処理が完了しました。\n` +
+        `HILSが初期状態へ復帰していることをご確認ください。\n\n` +
+        `【確認項目】\n` +
+        `・PODがIG_OFFになっていること\n` +
+        `・ECUソフト／ハード構成が利用開始時の状態に戻っていること\n` +
+        `・ECUリアル／ダミー設定が利用開始時の状態に戻っていること\n\n` +
+        `相違があれば事務局までご連絡ください。\n\n` +
+        `■対象予約\n` +
+        ` 予約ID : ${state.actionTitleId}\n` +
+        (terminateRes
+          ? ` 筐体名 : ${terminateRes.machine}\n 使用期間: ${terminateRes.start} 〜 ${terminateRes.end}\n`
+          : '') +
+        mailSignature()
       );
       setStatus('利用終了処理が完了しました。申請者へ復帰確認メールを送信しました。');
       closeFormPane();
@@ -2535,6 +2660,8 @@ async function init() {
 
   // 改修(第12回): URLクエリパラメータから仮IDを受取り、SPからアクションリスト行を取得（W-2）
   const _actionId = _urlParams.get('id');  // 事務局アクションリストの仮ID
+  // 改修(メール文面): 予約ID(仮ID)をメール本文で参照するため state に保持
+  state.actionTitleId = _actionId || '';
   if (_actionId) {
     try {
       setStatus('案件情報を読み込み中...', 'orange');
