@@ -28,7 +28,10 @@ const STATUS_CSV_PATH = process.env.STATUS_CSV_PATH || path.join(__dirname, '../
 
 const PORT        = parseInt(process.env.PORT || '3000');
 const IS_DUMMY    = !process.env.SITE_URL;   // 改修(SP連携マージ): Python方式ではSITE_URLで接続有無を判定
-const FRONTEND    = path.join(__dirname, '../frontend');
+// 改修(第16回): 本番は dist/ から配信。dist/ が存在しなければ開発用の frontend/ にフォールバック
+// （現状frontendはクラシックスクリプトの静的アプリのためビルド未実施でも動作する）
+const DIST        = path.join(__dirname, '../dist');
+const FRONTEND    = fs.existsSync(DIST) ? DIST : path.join(__dirname, '../frontend');
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
