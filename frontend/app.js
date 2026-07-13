@@ -274,6 +274,10 @@ const state = {
   formMode:      null,  // 改修: サイドパネル表示中のモード('register'|'edit'|'view'|null)
   // 改修(第12回): 起動時に取得した事務局アクションリストのID（W-6）
   actionItemId:  null,
+  // 改修: 1案件=1予約ガード判定用の現在ステータス（"N.xxxx"形式）
+  actionStatus:  '',
+  // 改修: このアクションIDに紐づく予約行のspId（削除時のガード解除判定用）
+  actionResSpId: null,
   // 改修(第14回): 辞退時の使用履歴行削除用に保持するSP内部ID
   actionHilsId:  null,
   // 改修(起動連携): 辞退時のCSV行削除用に保持する使用履歴行の設備/開始日/終了日
@@ -281,6 +285,16 @@ const state = {
   // 改修(第12回): URLパラメータ経由の自動記入用データ（W-4）
   autoFill:      null,
 };
+
+// ────────────────────────────────────────────
+// 改修: 1案件=1予約ガード（事務局アクションリストのステータスによる登録抑止）
+// ────────────────────────────────────────────
+// ステータス "N.xxxx" の先頭番号を返す
+function actionStatusNum(s) { return String(s || '').split('.')[0]; }
+// これらの番号は既に予約登録済み（または処理中/終了）とみなし、2件目の登録をブロックする
+const BLOCK_STATUS_NUMS = ['1', '3', '9', '10'];
+// 予約削除時にステータスを初期値へ戻さない番号（否認・取り下げの管理状態を維持）
+const KEEP_STATUS_NUMS  = ['90', '91'];
 
 // 改修: メイン筐体と予備を結合した全環境名リストを返す（行インデックス計算に使用）
 function getAllMachines() {
@@ -488,6 +502,56 @@ async function apiDeleteLegendColor(machine, start, end) {
     await fetch(`/api/legend-colors?${params}`, { method: 'DELETE' });
   } catch (e) {
     console.error('凡例色リストCSV行削除失敗:', e);
+  }
+}
+
+// 改修(状態分離): 状態リストCSV（予備日/設備故障/休日）を配列として取得する
+async function fetchStatusList() {
+  try {
+    const res = await fetch('/api/status-list');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.error('状態リストCSV取得失敗:', e);
+    return [];
+  }
+}
+
+// 改修(状態分離): 状態リストCSVに行を追記/上書きする（SharePointには登録しない）
+// 突合キー: machine + start + end
+async function apiAppendStatus(resData) {
+  try {
+    await fetch('/api/status-list', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        machine:   resData.machine   || '',
+        start:     resData.start     || '',
+        end:       resData.end       || '',
+        project:   resData.label     || '',
+        color:     resData.color     || '#fde68a',
+        borrower:  resData.user      || '',
+        applicant: resData.applicant || '',
+        status:    resData.status    || 'normal',
+        legendId:  resData.legendId  || '',
+        remark:    resData.remark    || '',
+        marks:     resData.marks     || [],
+      }),
+    });
+  } catch (e) {
+    console.error('状態リストCSV追記失敗:', e);
+  }
+}
+
+// 改修(状態分離): 状態リストCSVの該当行（machine+start+end）を削除する
+async function apiDeleteStatus(machine, start, end) {
+  if (!machine || !start || !end) return;
+  try {
+    const params = new URLSearchParams({ machine, start, end });
+    await fetch(`/api/status-list?${params}`, { method: 'DELETE' });
+  } catch (e) {
+    console.error('状態リストCSV行削除失敗:', e);
   }
 }
 
@@ -1788,6 +1852,8 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ newStart: startVal, newEnd: endVal, reason: reasonVal }),
       });
+      // 改修: 1案件=1予約ガード用に現在ステータスを追従（サーバ側でステータスを9.期間変更申請中に更新）
+      state.actionStatus = '9.期間変更申請中';
     }
     // ② PMOへ期間変更申請通知メール（改修(メール文面): 提案資料⑤に合わせて件名・本文を更新）
     const curRes     = state.actionHilsRes || (state.selectedResId != null ? state.reservations[state.selectedResId] : null);
@@ -1837,6 +1903,8 @@ document.getElementById('info-cancel-btn').addEventListener('click', async () =>
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ status: '91.申請者取り下げ' }),
       });
+      // 改修: 1案件=1予約ガード用に現在ステータスを追従
+      state.actionStatus = '91.申請者取り下げ';
     }
     // ② PMOへ利用取消依頼通知メール送信
     await sendMail(
@@ -1918,9 +1986,8 @@ document.getElementById('accept-change-btn').addEventListener('click', async () 
         ? ` 現在の期間: ${state.actionHilsRes.start} 〜 ${state.actionHilsRes.end}\n`
         : '') +
       `\n■変更希望\n` +
-      (newStart || newEnd
-        ? ` 希望期間 : ${newStart || '（変更なし）'} 〜 ${newEnd || '（変更なし）'}\n`
-        : '') +
+      // 改修: 希望期間を変更理由の直上に常時記載（未入力でも行を出すため条件分岐を撤廃）
+      ` 希望期間 : ${newStart || '（変更なし）'} 〜 ${newEnd || '（変更なし）'}\n` +
       ` 変更理由 : ${reason}` +
       mailSignature()
     );
@@ -1985,6 +2052,8 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ status: '91.申請者取り下げ' }),
       });
+      // 改修: 1案件=1予約ガード用に現在ステータスを追従
+      state.actionStatus = '91.申請者取り下げ';
       // ② 統合HILS使用履歴リストから当該行を削除（突合成功時のみ。失敗時は辞退処理を継続）
       if (state.actionHilsId) {
         await fetch(`/api/reservations/${state.actionHilsId}`, { method: 'DELETE' });
@@ -2029,18 +2098,39 @@ function deleteReservation(resId) {
   const delMachine = state.reservations[resId] ? state.reservations[resId].machine : null;
   const delStart   = state.reservations[resId] ? state.reservations[resId].start   : null;
   const delEnd     = state.reservations[resId] ? state.reservations[resId].end     : null;
+  // 改修(状態分離): 通常/非通常のどちらのCSVから削除すべきか判定するため、削除前に状態を退避
+  const delStatus  = state.reservations[resId] ? (state.reservations[resId].status || 'normal') : 'normal';
   state.reservations.splice(resId, 1);
   saveReservations(state.reservations);
   clearSelection();
   renderCalendar();
-  if (spId != null) apiDelete(spId);
-  // 改修(起動連携): SPアイテム削除に合わせてCSVの該当行も削除する
-  if (delMachine && delStart && delEnd) apiDeleteLegendColor(delMachine, delStart, delEnd);
+  if (delStatus === 'normal') {
+    if (spId != null) apiDelete(spId);
+    // 改修(起動連携): SPアイテム削除に合わせてCSVの該当行も削除する
+    if (delMachine && delStart && delEnd) apiDeleteLegendColor(delMachine, delStart, delEnd);
+  } else {
+    // 改修(状態分離): 予備日/設備故障/休日はSharePoint未連携のため、状態リストCSVの該当行のみ削除する
+    if (delMachine && delStart && delEnd) apiDeleteStatus(delMachine, delStart, delEnd);
+  }
+  // 改修: 1案件=1予約ガード。アクション連携中の予約を削除したら再登録可能にする。
+  // ただしステータスが 90/91（否認・取り下げ）の場合は管理状態を維持しステータス変更しない
+  if (state.actionItemId && spId != null && spId === state.actionResSpId) {
+    if (!KEEP_STATUS_NUMS.includes(actionStatusNum(state.actionStatus))) {
+      fetch(`/api/action-item/${state.actionItemId}/status`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ status: '0.仮申請受領前' }),
+      }).catch(e => console.error('削除後ステータス初期化エラー:', e));
+      state.actionStatus = '0.仮申請受領前';
+    }
+    state.actionResSpId = null;
+  }
   return true;
 }
 
 function openRegisterDialog() {
   if (!isAdmin) return;
+  // 改修(状態分離): 1案件=1予約ガードは通常予約のみに適用するため、submit側（mode==='register'）へ移設した
   const sel = state.selectedCells;
   if (!sel.size) {
     alert('筐体と期間をカレンダー上で選択してから「＋ 登録」を押してください');
@@ -2126,7 +2216,8 @@ const LABEL_FIELD_SETS = [
     { key: 'eng',  label: 'ENGカテ',  placeholder: '例）ENGカテ',   required: true },
   ]},
   // 改修(第16回): 一般募集ラベルに接頭辞 ')' を追加 U-1c
-  { match: n => n.includes('一般募集'), prefix: ')', parts: [
+  // 改修: 一般募集ラベルの接頭辞 ')' を削除（凡例カテゴリの接頭辞削除依頼による）
+  { match: n => n.includes('一般募集'), prefix: '', parts: [
     { key: 'no',   label: '予約管理No', placeholder: '例）001',       required: true },
     { key: 'code', label: '機種コード', placeholder: '例）ABCコード', required: true },
   ]},
@@ -2434,6 +2525,13 @@ function showDialog(title, data, mode, resId = null) {
       status,
       marks,     // 改修(第8回): 検証完了日★配列
     };
+    // 改修(状態分離): 1案件=1予約ガードは通常予約の新規登録のみに適用する
+    // （予備日/設備故障/休日はSharePoint未連携のため案件IDに関わらず複数件登録を許可）
+    if (mode === 'register' && resData.status === 'normal' &&
+        state.actionItemId && BLOCK_STATUS_NUMS.includes(actionStatusNum(state.actionStatus))) {
+      alert('この案件はすでに予約登録済みです。事務局アクションリストを確認して他の項目からアクセスしなおしてください。');
+      return;
+    }
     // 改修: ダイアログの担当者欄を state.assignees に反映して担当者列と同期
     const assigneeVal = (document.getElementById('f-assignee').value || '').trim();
     if (assigneeVal) {
@@ -2452,11 +2550,19 @@ function showDialog(title, data, mode, resId = null) {
       saveReservations(state.reservations);
       renderCalendar();
       updateInfoPanel();
+      // 改修(状態分離): 通常はSharePoint連携、予備日/設備故障/休日は状態リストCSVのみに記録する
+      if (resData.status !== 'normal') {
+        // 予備日/設備故障/休日: SharePointには一切登録せず状態リストCSVへ記録。案件IDのガードも適用しない
+        await apiAppendStatus(resData);
+        return;
+      }
       // 改修(SP連携マージ): SPに登録し、返却IdをspIdとして保存（楽観更新）
       const newSpId = await apiCreate(resData);
       if (newSpId != null) {
         state.reservations[state.selectedResId].spId = newSpId;
         saveReservations(state.reservations);
+        // 改修: 1案件=1予約ガード用に、このアクションIDに紐づく予約行のspIdを記録
+        if (state.actionItemId) state.actionResSpId = newSpId;
       }
       // 改修(起動連携): 凡例色リストCSVに追記（色・状態等リッチ項目を永続化）
       await apiAppendLegendColor(resData);
@@ -2478,6 +2584,8 @@ function showDialog(title, data, mode, resId = null) {
               setStatus(`ステータス更新に失敗しました: ${e1.error || r1.status}`, '#ef4444');
             } else {
               setStatus('ステータスを更新しました', '#22c55e');
+              // 改修: 1案件=1予約ガード用に現在ステータスを追従（以後の2件目登録を抑止）
+              state.actionStatus = '1.仮申請受領';
             }
             // ② 状態列（通常/予備/故障/休日）を更新
             if (resData.status) {
@@ -2524,42 +2632,66 @@ function showDialog(title, data, mode, resId = null) {
     } else if (mode === 'edit' && resId !== null) {
       // 改修(SP連携マージ): 編集前のspIdを退避してから上書き
       const prevSpId = state.reservations[resId].spId;
+      // 改修(状態分離): 編集前の状態・突合キーを退避（正規/非正規の切替時に旧ファイル側の行を削除するため）
+      const prevStatus  = state.reservations[resId].status  || 'normal';
+      const prevMachine = state.reservations[resId].machine;
+      const prevStart   = state.reservations[resId].start;
+      const prevEnd     = state.reservations[resId].end;
       state.reservations[resId] = { ...state.reservations[resId], ...resData };
       state.selectedResId = resId;
       saveReservations(state.reservations);
       renderCalendar();
       updateInfoPanel();
-      // 改修(SP連携マージ): spIdがあれば更新、なければ新規作成してspIdを保存
-      if (prevSpId != null) {
-        await apiUpdate(prevSpId, state.reservations[resId]);
+      const wasNormal = prevStatus === 'normal';
+      const isNormal  = resData.status === 'normal';
+      if (isNormal) {
+        // 改修(SP連携マージ): spIdがあれば更新、なければ新規作成してspIdを保存
+        if (prevSpId != null) {
+          await apiUpdate(prevSpId, state.reservations[resId]);
+        } else {
+          const newSpId = await apiCreate(state.reservations[resId]);
+          if (newSpId != null) {
+            state.reservations[resId].spId = newSpId;
+            saveReservations(state.reservations);
+          }
+        }
+        // 改修(起動連携): 凡例色リストCSVを更新（同一 machine+start+end で上書き）
+        await apiAppendLegendColor(state.reservations[resId]);
+        // 改修(状態分離): 非正規→正規への変更時は、旧・状態リストCSVの行を削除する
+        if (!wasNormal) await apiDeleteStatus(prevMachine, prevStart, prevEnd);
+        // 改修(第13回): 更新後に事務局アクションリストのステータスを「1.仮申請受領」へ戻す W-12
+        if (state.actionItemId) {
+          (async () => {
+            try {
+              const r = await fetch(`/api/action-item/${state.actionItemId}/status`, {
+                method:  'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ status: '1.仮申請受領' }),
+              });
+              // 改修: res.okを検査してエラーを画面に表示
+              if (!r.ok) {
+                const err = await r.json().catch(() => ({}));
+                console.error('ステータス更新失敗:', err);
+                setStatus(`ステータス更新に失敗しました: ${err.error || r.status}`, '#ef4444');
+              } else {
+                // 改修: 1案件=1予約ガード用に現在ステータスを追従
+                state.actionStatus = '1.仮申請受領';
+              }
+            } catch (e) {
+              console.error('更新後アクションリスト更新エラー:', e);
+            }
+          })();
+        }
       } else {
-        const newSpId = await apiCreate(state.reservations[resId]);
-        if (newSpId != null) {
-          state.reservations[resId].spId = newSpId;
+        // 改修(状態分離): 予備日/設備故障/休日へ変更（または非正規のまま編集）: SPは更新せず状態リストCSVへ記録
+        if (prevSpId != null) {
+          // 正規→非正規への変更: 既存のSP行・凡例色リストCSV行を削除しspIdを外す
+          await apiDelete(prevSpId);
+          await apiDeleteLegendColor(prevMachine, prevStart, prevEnd);
+          state.reservations[resId].spId = null;
           saveReservations(state.reservations);
         }
-      }
-      // 改修(起動連携): 凡例色リストCSVを更新（同一 machine+start+end で上書き）
-      await apiAppendLegendColor(state.reservations[resId]);
-      // 改修(第13回): 更新後に事務局アクションリストのステータスを「1.仮申請受領」へ戻す W-12
-      if (state.actionItemId) {
-        (async () => {
-          try {
-            const r = await fetch(`/api/action-item/${state.actionItemId}/status`, {
-              method:  'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body:    JSON.stringify({ status: '1.仮申請受領' }),
-            });
-            // 改修: res.okを検査してエラーを画面に表示
-            if (!r.ok) {
-              const err = await r.json().catch(() => ({}));
-              console.error('ステータス更新失敗:', err);
-              setStatus(`ステータス更新に失敗しました: ${err.error || r.status}`, '#ef4444');
-            }
-          } catch (e) {
-            console.error('更新後アクションリスト更新エラー:', e);
-          }
-        })();
+        await apiAppendStatus(state.reservations[resId]);
       }
     }
   };
@@ -2592,6 +2724,8 @@ function showDialog(title, data, mode, resId = null) {
           setStatus(`ステータス更新に失敗しました: ${err.error || r.status}`, 'red');
           return;
         }
+        // 改修: 1案件=1予約ガード用に現在ステータスを追従
+        state.actionStatus = '10.利用終了';
       }
       // ② 申請者へHILS復帰確認メールを送信（改修(メール文面): 提案資料⑧に合わせて件名・本文を更新）
       // 動作確認用: 宛先を固定。確認後は申請者アドレスへ変更すること
@@ -2698,6 +2832,8 @@ async function init() {
       const actionItem = await fetch(`/api/action-item/${encodeURIComponent(_actionId)}`).then(r => r.json());
       // 改修(第12回): PATCH対象はアクションリストのSP内部ID。Title値ではなく取得行のIdを保持する（W-6）
       state.actionItemId = actionItem.id;
+      // 改修: 1案件=1予約ガード用に現在ステータスを保持
+      state.actionStatus = actionItem.status || '';
       // 改修(第14回): 辞退時の使用履歴削除用に、対応する使用履歴行のSP idを特定して保持
       // 突合キー: label（machineType）+ user（email）。一致しなければ削除はスキップする（辞退処理自体は継続）
       state.actionHilsId  = null;
@@ -2713,6 +2849,8 @@ async function init() {
           state.actionHilsId  = _hit.id;
           // 改修(起動連携): 設備/開始日/終了日をCSV削除キーとして保持
           state.actionHilsRes = { machine: _hit.machine, start: _hit.start, end: _hit.end };
+          // 改修: 1案件=1予約ガード用に、起動時点で紐づく予約行のspIdを保持
+          state.actionResSpId = _hit.id;
         }
       } catch (_) { /* 突合失敗は無視。辞退処理継続 */ }
       // 改修(第12回): 分類によるルーム自動切替 W-3（南HILSのみ有効化）
@@ -2807,6 +2945,38 @@ async function init() {
       const maxId = saved.reduce((m, r) => Math.max(m, r._id || 0), 0);
       _nextLocalId = maxId + 1;
     }
+  }
+
+  // 改修(状態分離): 状態リストCSV（予備日/設備故障/休日）を取得し、疑似予約として起動時に反映する
+  // これらはSharePoint未連携のためspIdを持たせず、案件IDに関わらず複数件が並存できる
+  const statusList = await fetchStatusList();
+  if (statusList.length > 0) {
+    const statusReservations = statusList.map(s => ({
+      spId:      null,
+      _id:       _nextLocalId++,
+      machine:   s.machine,
+      start:     s.start,
+      end:       s.end,
+      label:     s.project   || '',
+      applicant: s.applicant || '',
+      color:     s.color     || '#fde68a',
+      user:      s.borrower  || '',
+      legendId:  s.legendId  || '',
+      status:    s.status    || 'normal',
+      remark:    s.remark    || '',
+      marks:     s.marks     || [],
+      borrower:  s.borrower  || '',
+      room:      'south',
+    }));
+    state.reservations = state.reservations.concat(statusReservations);
+    // 改修(状態分離): 疑似予約の設備名も南ルームの筐体一覧に反映する（行を動的生成）
+    const statusMachines = [...new Set(statusReservations.map(r => r.machine).filter(Boolean))];
+    const existingSouth  = state.machinesByRoom.south || [];
+    statusMachines.forEach(m => { if (!existingSouth.includes(m)) existingSouth.push(m); });
+    state.machinesByRoom.south = existingSouth;
+    saveMachines();
+    syncRoomViews();
+    saveReservations(state.reservations);
   }
 
   // 改修(第7回): 表示期間を初期化してからカレンダーを描画し、今日へ自動スクロール

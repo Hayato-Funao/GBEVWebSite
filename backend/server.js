@@ -22,6 +22,10 @@ loadEnv();
 const CSV_PATH     = process.env.LEGEND_CSV_PATH || path.join(__dirname, '../凡例色リスト.csv');
 const CSV_MAX_ROWS = parseInt(process.env.LEGEND_CSV_MAX || '500', 10);
 
+// 改修(状態分離): 予備日/設備故障/休日を記録する状態リストCSVのパス
+// 通常予約は凡例色リストCSV、非通常（予備日/設備故障/休日）は本CSVに分離して記録する
+const STATUS_CSV_PATH = process.env.STATUS_CSV_PATH || path.join(__dirname, '../状態リスト.csv');
+
 const PORT        = parseInt(process.env.PORT || '3000');
 const IS_DUMMY    = !process.env.SITE_URL;   // 改修(SP連携マージ): Python方式ではSITE_URLで接続有無を判定
 const FRONTEND    = path.join(__dirname, '../frontend');
@@ -194,7 +198,8 @@ const server = http.createServer(async (req, res) => {
   // 改修: idはTitle列の値（非数値・日本語も許容）。復号してPythonに渡す
   const actionItemMatch = pathname.match(/^\/api\/action-item\/([^\/]+)$/);
   if (actionItemMatch && method === 'GET') {
-    if (IS_DUMMY) return jsonOk(res, { dummy: true, id: 0, category: '統合HILS利用', applicant: 'テスト太郎', machineType: '機種X' });
+    // 改修: 1案件=1予約ガードの判定用にstatusを追加（ダミー時は常に登録可の初期値）
+    if (IS_DUMMY) return jsonOk(res, { dummy: true, id: 0, category: '統合HILS利用', applicant: 'テスト太郎', machineType: '機種X', status: '0.仮申請受領前' });
     try {
       const item = await sp.runCommand('get_action_item', [decodeURIComponent(actionItemMatch[1])]);
       jsonOk(res, normalizeActionItem(item));
@@ -299,6 +304,45 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 改修(状態分離): GET /api/status-list — 状態リストCSV（予備日/設備故障/休日）を配列として返す
+  if (pathname === '/api/status-list' && method === 'GET') {
+    try {
+      jsonOk(res, parseLegendCsv(STATUS_CSV_PATH));
+    } catch (e) {
+      console.error('GET /api/status-list:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(状態分離): POST /api/status-list — 状態リストCSVに行を追記/上書き
+  if (pathname === '/api/status-list' && method === 'POST') {
+    try {
+      const body = await readBody(req);
+      appendLegendCsv(body, STATUS_CSV_PATH);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('POST /api/status-list:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(状態分離): DELETE /api/status-list?machine=&start=&end= — 状態リストCSVの該当行を削除
+  if (pathname === '/api/status-list' && method === 'DELETE') {
+    try {
+      const machine = urlObj.searchParams.get('machine') || '';
+      const start   = urlObj.searchParams.get('start')   || '';
+      const end     = urlObj.searchParams.get('end')     || '';
+      deleteLegendCsv(machine, start, end, STATUS_CSV_PATH);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('DELETE /api/status-list:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
   // ── 静的ファイル配信 ──
   serveStatic(req, res, pathname);
 });
@@ -360,10 +404,11 @@ function splitCsvLine(line) {
 }
 
 // CSVを読み込み行オブジェクト配列を返す（ファイル無しは []）
-function parseLegendCsv() {
+// 改修(状態分離): 凡例色リスト/状態リストの両CSVで共用するため、パスを引数化
+function parseLegendCsv(csvPath = CSV_PATH) {
   let raw;
   try {
-    raw = fs.readFileSync(CSV_PATH, 'utf8');
+    raw = fs.readFileSync(csvPath, 'utf8');
   } catch (_) {
     return [];
   }
@@ -404,7 +449,8 @@ function parseLegendCsv() {
 }
 
 // 行オブジェクト配列をCSVファイルに書き戻す
-function writeLegendCsv(rows) {
+// 改修(状態分離): パスを引数化（凡例色リスト/状態リスト共用）
+function writeLegendCsv(rows, csvPath = CSV_PATH) {
   const headerLine = CSV_HEADERS.map(quoteVal).join(',');
   const dataLines  = rows.map(r => [
     quoteVal(r.machine   || ''),
@@ -421,7 +467,7 @@ function writeLegendCsv(rows) {
   ].join(','));
   // 改修(文字コード): UTF-8 BOMを先頭に付与（日本語Windowsのアプリが文字化けしないよう）
   const bom = '﻿';
-  fs.writeFileSync(CSV_PATH, bom + [headerLine, ...dataLines].join('\r\n') + '\r\n', 'utf8');
+  fs.writeFileSync(csvPath, bom + [headerLine, ...dataLines].join('\r\n') + '\r\n', 'utf8');
 }
 
 // 突合キーを生成（machine|start|end）
@@ -430,8 +476,9 @@ function csvKey(machine, start, end) {
 }
 
 // 同一 machine+start+end があれば上書き、無ければ追記。満杯時は先頭行を削除
-function appendLegendCsv(row) {
-  const rows = parseLegendCsv();
+// 改修(状態分離): パスを引数化（凡例色リスト/状態リスト共用）
+function appendLegendCsv(row, csvPath = CSV_PATH) {
+  const rows = parseLegendCsv(csvPath);
   const key  = csvKey(row.machine, row.start, row.end);
   const idx  = rows.findIndex(r => csvKey(r.machine, r.start, r.end) === key);
   const newRow = {
@@ -454,16 +501,17 @@ function appendLegendCsv(row) {
     // 行数上限を超えた場合は古い先頭行から削除
     while (rows.length > CSV_MAX_ROWS) rows.shift();
   }
-  writeLegendCsv(rows);
+  writeLegendCsv(rows, csvPath);
 }
 
 // 同一 machine+start+end の行を削除して書き戻す（該当無しは何もしない）
-function deleteLegendCsv(machine, start, end) {
-  const rows    = parseLegendCsv();
+// 改修(状態分離): パスを引数化（凡例色リスト/状態リスト共用）
+function deleteLegendCsv(machine, start, end, csvPath = CSV_PATH) {
+  const rows    = parseLegendCsv(csvPath);
   const key     = csvKey(machine, start, end);
   const filtered = rows.filter(r => csvKey(r.machine, r.start, r.end) !== key);
   if (filtered.length !== rows.length) {
-    writeLegendCsv(filtered);
+    writeLegendCsv(filtered, csvPath);
   }
 }
 
@@ -506,6 +554,8 @@ function normalizeActionItem(item) {
     applicant:   item['OData__x7533__x8acb__x8005__x540d_']                                         || '',  // 申請者名
     email:       item['OData__x7533__x8acb__x8005__x30e1__x30'] || '',  // 申請者メールアドレス（SP内部名32文字截断）
     machineType: item['OData__x6a5f__x7a2e__x547c__x79f0_']                                         || '',  // 機種呼称（ラベル生成用）
+    // 改修: 1案件=1予約ガードの判定用にステータス列を追加（update_action_statusと同一の内部名）
+    status:      item['OData__x30b9__x30c6__x30fc__x30bf__x30']                                     || '',
   };
 }
 
