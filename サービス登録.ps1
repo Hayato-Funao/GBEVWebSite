@@ -15,8 +15,15 @@
     パスワードはファイルに保存せず、実行時にその場で入力させる
     （Register-ScheduledTask の仕様上、内部で一時的に平文へ変換されるが、変数はメモリ上のみに留まる）。
 
+    改修(バッチログオン対応): タスクスケジューラの「ログオン有無に関わらず実行」セッションでは、
+    暗黙の現在ユーザー資格情報によるNTLM SSOが社内プロキシに407で拒否される事象を確認した。
+    このため、同じパスワードをWindows資格情報マネージャー（cmdkey、ターゲット名 HILS_PROXY_AUTH）
+    にも登録し、sp_helper.py が明示的な資格情報でNTLM認証できるようにする。
+
 .NOTES
     管理者権限のPowerShellで実行すること。
+    実行アカウント自身が対話ログインして実行すること（cmdkeyは実行者自身の資格情報マネージャーに
+    保存されるため、他アカウント宛の登録を別ユーザーが代行することはできない）。
 #>
 
 $taskName = "HILS予約サイト"
@@ -68,6 +75,13 @@ $settings = New-ScheduledTaskSettingsSet `
 #       （-Password指定時、LogonTypeは自動的にPasswordになる）。
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
 	-Settings $settings -User $account -Password $plainPassword -RunLevel Limited -Force | Out-Null
+
+# 改修(バッチログオン対応): 同じパスワードを資格情報マネージャーにも登録する。
+# sp_helper.py の _ntlm_connect() がこれを読み取り、明示的資格情報でNTLM認証する。
+$credTarget = "HILS_PROXY_AUTH"
+cmdkey /delete:$credTarget 2>&1 | Out-Null
+cmdkey /generic:$credTarget /user:$account /pass:$plainPassword | Out-Null
+Write-Output "資格情報マネージャーに登録完了: $credTarget （ユーザー: $account）"
 
 # メモリ上の平文パスワードは使用後すぐに破棄する
 $plainPassword = $null

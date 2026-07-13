@@ -18,7 +18,11 @@ function runHelper(args, timeoutMs = 120000) {
       PYTHONIOENCODING:  'utf-8',
     };
 
-    const proc = spawn('python', [HELPER, ...args], { env, windowsHide: true });
+    // 改修: 'python'をPATH解決に任せると、タスクスケジューラのバッチログオン環境で
+    //       WindowsAppsのスタブ(実体の無いエイリアス)が誤って解決され、無出力のまま
+    //       即終了する事象があったため、.envのPYTHON_EXEで絶対パスを指定可能にする。
+    const pythonExe = process.env.PYTHON_EXE || 'python';
+    const proc = spawn(pythonExe, [HELPER, ...args], { env, windowsHide: true });
 
     let stdout = '';
     let timer  = setTimeout(() => {
