@@ -528,25 +528,33 @@ def main():
         return
 
     # 改修(第14回): Graph API /me/sendMail で委任トークンによりメール送信（SP不要のためsess生成前に処理）
+    # 改修: 宛先(to)・CC(cc)ともカンマ区切りで複数アドレスに対応。宛先/CCはNode側のコンソール設定
+    # （backend/mail_config.json）に基づき呼び出し元(server.js/hils_alert.py)が決定して渡す
     if cmd == 'send_mail':
         to      = sys.argv[2]
         subject = sys.argv[3]
         body    = sys.argv[4]
+        cc      = sys.argv[5] if len(sys.argv) > 5 else ''
         # Mail.Send スコープでトークン取得（委任フロー。サインインユーザー自身として送信）
         tok = get_token(['https://graph.microsoft.com/Mail.Send'])
         if 'error' in tok:
             print(json.dumps({'error': tok['error']}, ensure_ascii=False))
             return
         # Graph API sendMail エンドポイント（/me/sendMail = サインインユーザー名義で送信）
-        # 確認後は宛先 to を PMO の正式アドレスへ変更すること
         url = 'https://graph.microsoft.com/v1.0/me/sendMail'
+        # カンマ区切りの複数アドレスをGraph API形式（emailAddressオブジェクトの配列）へ変換
+        to_addresses = [a.strip() for a in to.split(',') if a.strip()]
         payload = {
             'message': {
                 'subject': subject,
                 'body': {'contentType': 'Text', 'content': body},
-                'toRecipients': [{'emailAddress': {'address': to}}],
+                'toRecipients': [{'emailAddress': {'address': a}} for a in to_addresses],
             }
         }
+        if cc:
+            cc_addresses = [a.strip() for a in cc.split(',') if a.strip()]
+            if cc_addresses:
+                payload['message']['ccRecipients'] = [{'emailAddress': {'address': a}} for a in cc_addresses]
         h = {
             'Authorization': f"Bearer {tok['token']}",
             'Content-Type':  'application/json',

@@ -376,17 +376,29 @@ function startForBizDays(endDate, n) {
 // ────────────────────────────────────────────
 // メール送信ヘルパ（改修(第14回): /api/mail 経由でGraph API /me/sendMail を呼び出す）
 // ────────────────────────────────────────────
-async function sendMail(to, subject, body) {
+// 改修: CC対応のため第4引数ccを追加（未指定時は省略可）
+async function sendMail(to, subject, body, cc) {
   const res = await fetch('/api/mail', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ to, subject, body }),
+    body:    JSON.stringify({ to, subject, body, cc: cc || '' }),
   });
   if (!res.ok) throw new Error(await res.text());
 }
 
-// 改修(メール文面): PMOアドレス（署名の窓口・PMO宛先で共用。確認後に正式値へ変更すること）
-const MAIL_PMO_ADDRESS = 'hayato_funao_gst@jp.honda';
+// 改修: 事務局宛先(To)・CC・ユーザー宛CCはコンソール設定（backend/mail_config.json）から配布される。
+// サーバから配布されるまでの初期値は空文字とし、mailConfig.pmoTo が空の間は事務局宛メールを送らない。
+const mailConfig = { pmoTo: '', pmoCc: '', userCc: '' };
+
+// 改修: 起動時にサーバから宛先/CC設定を取得する。取得失敗時は空のまま（事務局宛メールは送信不可）
+async function loadMailConfig() {
+	try {
+		const cfg = await fetch('/api/mail-config').then(r => r.json());
+		Object.assign(mailConfig, cfg);
+	} catch (e) {
+		console.error('メール宛先/CC設定の取得に失敗しました:', e);
+	}
+}
 
 // 改修(メール文面): 共通件名ビルダ。筐体名があれば末尾に＜筐体名＞を付与
 function buildMailSubject(title, machine) {
@@ -395,10 +407,12 @@ function buildMailSubject(title, machine) {
 }
 
 // 改修(メール文面): 全メール末尾の共通署名ブロック
+// 改修: お問い合わせ先はコンソール設定の事務局宛先(pmoTo)先頭アドレスを使用
 function mailSignature() {
+	const contact = (mailConfig.pmoTo || '').split(',')[0].trim();
 	return `\n────────────────────\n` +
 		`統合HILS予約管理表事務局\n` +
-		`お問い合わせ: ${MAIL_PMO_ADDRESS}\n` +
+		`お問い合わせ: ${contact}\n` +
 		`予約管理表: ${location.origin}/\n` +
 		`────────────────────`;
 }
@@ -1869,7 +1883,7 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
     const curStart   = curRes?.start   || '';
     const curEnd     = curRes?.end     || '';
     await sendMail(
-      MAIL_PMO_ADDRESS,
+      mailConfig.pmoTo,
       buildMailSubject('期間変更申請の通知', extMachine),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より期間変更の申請がありました。\n\n` +
@@ -1881,7 +1895,8 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
       ` 変更後期間: ${startVal || curStart} 〜 ${endVal}\n` +
       `\n■変更理由\n` +
       ` ${reasonVal}` +
-      mailSignature()
+      mailSignature(),
+      mailConfig.pmoCc
     );
     setStatus('期間変更申請を送信しました。PMOへ通知しました。');
     // 改修: extend-paneを閉じてプレースホルダを表示
@@ -1919,7 +1934,7 @@ document.getElementById('info-cancel-btn').addEventListener('click', async () =>
     }
     // ② PMOへ利用取消依頼通知メール送信
     await sendMail(
-      MAIL_PMO_ADDRESS,
+      mailConfig.pmoTo,
       buildMailSubject('利用取消依頼の通知', cancelMachine),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より利用取消の依頼がありました。\n\n` +
@@ -1927,7 +1942,8 @@ document.getElementById('info-cancel-btn').addEventListener('click', async () =>
       ` 予約ID  : ${state.actionTitleId}\n` +
       ` 筐体名  : ${cancelMachine}\n` +
       (cancelRes ? ` 現在の貸出期間: ${cancelRes.start} 〜 ${cancelRes.end}\n` : '') +
-      mailSignature()
+      mailSignature(),
+      mailConfig.pmoCc
     );
     setStatus('利用取消依頼を送信しました。PMOへ通知しました。');
   } catch (e) {
@@ -1948,7 +1964,7 @@ document.getElementById('info-report-btn').addEventListener('click', async () =>
   try {
     // 改修(メール文面): 提案資料⑦に合わせて件名・本文を更新
     await sendMail(
-      MAIL_PMO_ADDRESS,
+      mailConfig.pmoTo,
       buildMailSubject('利用終了報告', reportRes?.machine || ''),
       `PMO ご担当者 様\n\n` +
       `下記予約について、使用者より利用終了の報告がありました。\n` +
@@ -1958,7 +1974,8 @@ document.getElementById('info-report-btn').addEventListener('click', async () =>
       (reportRes
         ? ` 筐体名  : ${reportRes.machine}\n 貸出期間 : ${reportRes.start} 〜 ${reportRes.end}\n`
         : '') +
-      mailSignature()
+      mailSignature(),
+      mailConfig.pmoCc
     );
     setStatus('利用終了報告を送信しました。PMOへ通知しました。');
   } catch (e) {
@@ -2008,8 +2025,9 @@ document.getElementById('accept-change-btn').addEventListener('click', async () 
     // ② 改修(メール文面): 提案資料②に合わせて件名・本文を更新
     const chgMachine = state.actionHilsRes?.machine || '';
     await sendMail(
-      MAIL_PMO_ADDRESS,
-      buildMailSubject('予約内容変更のご依頼', chgMachine),
+      mailConfig.pmoTo,
+      // 改修: 件名を「予約内容変更」から「日程変更」に変更（実質は使用期間の変更依頼のため）
+      buildMailSubject('日程変更のご依頼', chgMachine),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より使用期間の変更依頼がありました。\n\n` +
       `■対象予約\n` +
@@ -2022,7 +2040,8 @@ document.getElementById('accept-change-btn').addEventListener('click', async () 
       // 改修: 希望期間を変更理由の直上に常時記載（未入力でも行を出すため条件分岐を撤廃）
       ` 希望期間 : ${newStart || '（変更なし）'} 〜 ${newEnd || '（変更なし）'}\n` +
       ` 変更理由 : ${reason}` +
-      mailSignature()
+      mailSignature(),
+      mailConfig.pmoCc
     );
     setStatus('変更依頼を送信しました');
     document.getElementById('accept-change-reason').value = '';
@@ -2046,7 +2065,7 @@ document.getElementById('accept-ok-btn').addEventListener('click', async () => {
     // ② PMOへ承知メール送信（改修(メール文面): 提案資料③に合わせて件名・本文を更新）
     const okMachine = state.actionHilsRes?.machine || '';
     await sendMail(
-      MAIL_PMO_ADDRESS,
+      mailConfig.pmoTo,
       buildMailSubject('使用承知の通知', okMachine),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より使用を「承知」する旨の回答がありました。\n\n` +
@@ -2056,7 +2075,8 @@ document.getElementById('accept-ok-btn').addEventListener('click', async () => {
       (state.actionHilsRes
         ? ` 使用期間: ${state.actionHilsRes.start} 〜 ${state.actionHilsRes.end}\n`
         : '') +
-      mailSignature()
+      mailSignature(),
+      mailConfig.pmoCc
     );
     setStatus('承知しました。PMOへ通知を送信しました。');
   } catch (e) {
@@ -2102,7 +2122,7 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
     // ④ PMOへ辞退メール送信（改修(メール文面): 提案資料④に合わせて件名・本文を更新）
     const rejMachine = state.actionHilsRes?.machine || '';
     await sendMail(
-      MAIL_PMO_ADDRESS,
+      mailConfig.pmoTo,
       buildMailSubject('使用辞退の通知', rejMachine),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より使用を「辞退」する旨の回答がありました。\n` +
@@ -2115,7 +2135,8 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
         : '') +
       `\n■辞退理由\n` +
       ` ${rejectReason}` +
-      mailSignature()
+      mailSignature(),
+      mailConfig.pmoCc
     );
     setStatus('辞退しました。PMOへ通知を送信しました。');
   } catch (e) {
@@ -2675,7 +2696,8 @@ function showDialog(title, data, mode, resId = null) {
               `下記ページより内容をご確認のうえ、「承知」または「辞退」の操作をお願いします。\n` +
               `使用期間の変更をご希望の場合も、下記ページより変更依頼が可能です。\n\n` +
               ` 承知・辞退ページ: ${location.origin}/?page=accept&id=${state.actionTitleId}` +
-              mailSignature()
+              mailSignature(),
+              mailConfig.userCc
             );
           } catch (e) {
             console.error('使用確定通知メール送信エラー:', e);
@@ -2806,7 +2828,8 @@ function showDialog(title, data, mode, resId = null) {
         (terminateRes
           ? ` 筐体名 : ${terminateRes.machine}\n 使用期間: ${terminateRes.start} 〜 ${terminateRes.end}\n`
           : '') +
-        mailSignature()
+        mailSignature(),
+        mailConfig.userCc
       );
       setStatus('利用終了処理が完了しました。申請者へ復帰確認メールを送信しました。');
       closeFormPane();
@@ -2881,6 +2904,9 @@ function renderAcceptInfo() {
 // 初期化
 // ────────────────────────────────────────────
 async function init() {
+  // 改修: 事務局宛先(To)・各CCのコンソール設定をサーバから取得（メール送信箇所で参照するため最初に実行）
+  await loadMailConfig();
+
   document.getElementById('user-name').textContent = isAdmin ? '事務局' : 'ユーザー';
   if (!isAdmin) document.getElementById('register-btn').classList.add('hidden');
 
@@ -2908,9 +2934,13 @@ async function init() {
       state.actionHilsRes = null;
       try {
         const _list = await fetch('/api/reservations').then(r => r.json());
-        const _hit  = _list.find(x =>
-          x.machine === (actionItem.machineType || '') || x.label === (actionItem.machineType || '')
-        );
+        // 改修(承知/辞退表示不具合): まず事務局アクションリストID列で確実に突合する。
+        // 機種呼称(machineType)は設備名/案件名と概念が異なり突合が失敗しやすいためフォールバックへ降格。
+        const _hit =
+          _list.find(x => x.actionListId != null && String(x.actionListId) === String(_actionId)) ||
+          _list.find(x =>
+            x.machine === (actionItem.machineType || '') || x.label === (actionItem.machineType || '')
+          );
         if (_hit) {
           state.actionHilsId  = _hit.id;
           // 改修(起動連携): 設備/開始日/終了日をCSV削除キーとして保持

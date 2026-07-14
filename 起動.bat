@@ -6,6 +6,9 @@ REM 改修(第17回): 本ファイルをUTF-8(BOM無し)保存に変更し、chc
 REM               あわせて改行をCRLFに統一(LFのみだと文字化けの原因になるため)
 echo 統合HILS予約サイト 起動中...
 pushd "%~dp0backend"
+REM 改修(不具合修正): 手動起動時のみメール宛先/CC設定のコンソール入力を有効化する
+REM               （タスクスケジューラ経由の_daemon.batでは本変数を設定しないため常にスキップされる）
+set HILS_MAIL_PROMPT=1
 node server.js
 echo.
 echo サーバーが停止しました。

@@ -1,8 +1,9 @@
 'use strict';
 // 外部パッケージ不要 - Node.js 標準ライブラリのみ使用
-const http = require('http');
-const fs   = require('fs');
-const path = require('path');
+const http     = require('http');
+const fs       = require('fs');
+const path     = require('path');
+const readline = require('readline'); // 改修: 起動時コンソール入力でメール宛先/CCを設定するため使用
 
 // ── .env 手動読み込み ──
 function loadEnv() {
@@ -31,6 +32,105 @@ const STATUS_CSV_PATH = process.env.STATUS_CSV_PATH || path.join(__dirname, '../
 const MACHINE_CSV_DIR   = process.env.MACHINE_CSV_DIR || path.join(__dirname, '../筐体マスタ');
 // ルーム名 → CSVファイル名の対応表（許可ルームをここで固定し、パストラバーサルを防止）
 const MACHINE_CSV_FILES = { west: '筐体一覧_west.csv', south: '筐体一覧_south.csv' };
+
+// 改修: メール宛先/CC設定 ── 開発者が起動時にコンソールから事務局宛先(To)・各CCを入力できるようにする。
+// Node(フロント発メール)とPythonバッチ(hils_alert.py)の両方から参照するため、専用JSONファイルへ永続化する。
+const MAIL_CONFIG_PATH    = path.join(__dirname, 'mail_config.json');
+const MAIL_CONFIG_DEFAULT = {
+  pmoTo:   'hayato_funao_gst@jp.honda', // 事務局宛メールの宛先（複数可・カンマ区切り）
+  pmoCc:   '', // 事務局宛メールのCC（複数可・カンマ区切り）
+  userCc:  '', // ユーザー宛メールのCC（複数可・カンマ区切り）
+  alertCc: '', // アラートメール（利用終了前日案内）のCC（複数可・カンマ区切り）
+};
+
+// メール設定をファイルから読み込む（存在しない/壊れている場合は既定値を使用）
+function loadMailConfig() {
+  try {
+    const raw = fs.readFileSync(MAIL_CONFIG_PATH, 'utf8');
+    return { ...MAIL_CONFIG_DEFAULT, ...JSON.parse(raw) };
+  } catch (_) {
+    return { ...MAIL_CONFIG_DEFAULT };
+  }
+}
+
+// メール設定をファイルへ保存
+function saveMailConfig(cfg) {
+  fs.writeFileSync(MAIL_CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf8');
+}
+
+let mailConfig = loadMailConfig();
+
+// 改修: サーバ起動時にコンソールで宛先/CCを入力させる。
+// 宛先(To)は必須項目のため「空欄Enter=現状維持」とするが、CCは「未設定（CCなし）」も正当な状態のため
+// 「空欄Enter=CCなしとして確定（現状の値があっても上書きでクリアされる）」とし、Toとは挙動を分ける。
+// 改修(再修正): 当初は非TTY判定(process.stdin.isTTY)でタスクスケジューラ実行時をスキップする方式だったが、
+// Windowsタスクスケジューラの「ログオン有無に関わらず実行」では、コンソールサブシステムのプロセスに
+// 非表示コンソールが割り当てられ isTTY が例外を投げずに true と評価される場合があることが実機で判明した。
+// この場合 rl.question() が誰も入力できない非表示コンソールで永久に応答待ちとなり、schtasks側からは
+// 「0x800710E0（入力待ちで一時停止）」として観測され、サイトが起動しない不具合を起こした。
+// isTTYへの依存自体をやめ、環境変数 HILS_MAIL_PROMPT=1 が明示的に設定されている場合のみプロンプトを
+// 表示する方式に変更する（既定は常にスキップ）。手動起動用の 起動.bat / 開発起動.bat では本変数を
+// セットして従来の対話UXを維持し、_daemon.bat（タスクスケジューラ経由）は未設定のため常にスキップされる。
+function promptMailConfig() {
+  return new Promise(resolve => {
+    if (process.env.HILS_MAIL_PROMPT !== '1') {
+      console.log('（HILS_MAIL_PROMPT未設定のためメール宛先/CC設定プロンプトをスキップします）');
+      return resolve();
+    }
+    // 改修(不具合修正): 上記フラグが立っている場合でも、process.stdinへの初回アクセス自体
+    // （.isTTY参照やreadline初期化）が環境によって例外(EBADF等)を投げることがあるため、
+    // 念のためtry/catchで保護し、例外時は非対話とみなして安全にスキップする（起動を絶対に止めない）。
+    let isInteractive = false;
+    try {
+      isInteractive = !!process.stdin.isTTY;
+    } catch (_) {
+      isInteractive = false; // stdinハンドルが存在しない実行環境では例外になり得るため非対話とみなす
+    }
+    if (!isInteractive) {
+      console.log('（コンソールが検出できないためメール宛先/CC設定プロンプトをスキップします）');
+      return resolve();
+    }
+    try {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      // 第3要素isCc: true=CC項目（空欄でCCなしを確定）、false=宛先(To)項目（空欄で現状維持）
+      const items = [
+        ['pmoTo',   '事務局宛メールの宛先(To)',                  false],
+        ['pmoCc',   '事務局宛メールのCC',                        true],
+        ['userCc',  'ユーザー宛メールのCC',                      true],
+        ['alertCc', 'アラートメール（利用終了前日案内）のCC',    true],
+      ];
+      const ask = i => {
+        if (i >= items.length) {
+          rl.close();
+          saveMailConfig(mailConfig);
+          return resolve();
+        }
+        const [key, label, isCc] = items[i];
+        const hint = isCc ? '複数可・カンマ区切り／空欄でCCなし' : '複数可・カンマ区切り／空欄で現状維持';
+        rl.question(
+          `${label} [現在値: ${mailConfig[key] || '(未設定)'}]（${hint}）: `,
+          answer => {
+            const trimmed = answer.trim();
+            if (isCc) {
+              // CCは空欄入力をそのまま確定させる（現状値の保持ではなく「CCなし」への明示的な変更）
+              mailConfig[key] = trimmed;
+            } else if (trimmed) {
+              mailConfig[key] = trimmed;
+            }
+            ask(i + 1);
+          }
+        );
+      };
+      console.log('── メール宛先/CC設定 ──');
+      console.log('　宛先(To)：空欄Enterで現状維持 ／ CC：空欄Enterで「CCなし」として登録（現状維持ではない）');
+      ask(0);
+    } catch (e) {
+      // readline初期化等で例外が起きても起動は継続する（既定値のまま起動）
+      console.error('メール宛先/CC設定プロンプトの初期化に失敗しました。スキップします:', e.message);
+      resolve();
+    }
+  });
+}
 
 const PORT        = parseInt(process.env.PORT || '3000');
 const IS_DUMMY    = !process.env.SITE_URL;   // 改修(SP連携マージ): Python方式ではSITE_URLで接続有無を判定
@@ -159,12 +259,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 改修: GET /api/mail-config — コンソールで設定した事務局宛先(To)・CCをフロントへ配布
+  // （alertCcはPythonバッチ側のみで使用するため配布対象外）
+  if (pathname === '/api/mail-config' && method === 'GET') {
+    return jsonOk(res, { pmoTo: mailConfig.pmoTo, pmoCc: mailConfig.pmoCc, userCc: mailConfig.userCc });
+  }
+
   // 改修(第14回): POST /api/mail — Graph API /me/sendMail 経由でメール送信
+  // 改修: CC対応のため body から cc を受け取り sp_helper.py へ渡す
   if (pathname === '/api/mail' && method === 'POST') {
     if (IS_DUMMY) return jsonOk(res, { success: true, dummy: true });
     try {
-      const { to, subject, body } = await readBody(req);
-      await sp.runCommand('send_mail', [to, subject, body]);
+      const { to, subject, body, cc } = await readBody(req);
+      await sp.runCommand('send_mail', [to, subject, body, cc || '']);
       jsonOk(res, { success: true });
     } catch (e) {
       console.error('POST /api/mail:', e.message);
@@ -675,6 +782,9 @@ function normalizeSpItem(item) {
     user:     item['OData__x7533__x8acb__x8005__x540d_']        || '',
     // 改修: 使用履歴リストに新規追加された借用者名列を取得（承知/辞退ページで表示）
     borrower: item['OData__x501f__x7528__x8005__x540d_']        || '',
+    // 改修(承知/辞退表示不具合): 事務局アクションリストID列を返却し、承知/辞退ページの予約突合キーに使う
+    actionListId: item['OData__x4e8b__x52d9__x5c40__x30a2__x30'] != null
+        ? item['OData__x4e8b__x52d9__x5c40__x30a2__x30'] : null,
   };
 }
 
@@ -730,8 +840,19 @@ const DUMMY_RESERVATIONS = [
   { id: 8, machine: '筐体P', start: '2026-06-20', end: '2026-06-25', label: 'XPX-FI',       legendId: 'leg2', color: '#E63283', user: '' },
 ];
 
-server.listen(PORT, () => {
-  console.log(`HILS予約Webアプリ起動: http://localhost:${PORT}`);
-  if (IS_DUMMY) console.log('  ※ SITE_URL未設定のためダミーデータで動作中');
-  else          console.log(`  SharePoint: ${process.env.SITE_URL}`);
-});
+// 改修: 起動時のメール宛先/CCコンソール入力を待ってからHTTP待受を開始する
+// 改修(不具合修正): promptMailConfig()側でも例外を握っているが、二重の安全網として
+// ここでもtry/catchし、メール設定プロンプトに起因するいかなる異常があってもserver.listen()に
+// 必ず到達させる（タスクスケジューラ等の無人起動でサイトが立ち上がらなくなる事態を防ぐ）
+(async () => {
+  try {
+    await promptMailConfig();
+  } catch (e) {
+    console.error('メール宛先/CC設定プロンプトでエラーが発生しました。既定値のまま起動を継続します:', e.message);
+  }
+  server.listen(PORT, () => {
+    console.log(`HILS予約Webアプリ起動: http://localhost:${PORT}`);
+    if (IS_DUMMY) console.log('  ※ SITE_URL未設定のためダミーデータで動作中');
+    else          console.log(`  SharePoint: ${process.env.SITE_URL}`);
+  });
+})();

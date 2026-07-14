@@ -37,6 +37,29 @@ def run_sp_command(cmd, *args):
 	return json.loads(result.stdout)
 
 
+# 改修: 事務局宛先(To)・各CCのコンソール設定（server.js起動時に入力・保存）を読み込む。
+# Node側と同じ backend/mail_config.json を参照することで、フロント発メールとアラートメールの
+# お問い合わせ先・CC設定を一元管理する
+_MAIL_CONFIG_PATH = os.path.join(_HERE, 'mail_config.json')
+_MAIL_CONFIG_DEFAULT = {
+	'pmoTo':   'hayato_funao_gst@jp.honda',
+	'pmoCc':   '',
+	'userCc':  '',
+	'alertCc': '',
+}
+
+
+def load_mail_config():
+	"""mail_config.json を読み込む（存在しない/壊れている場合は既定値を返す）"""
+	try:
+		with open(_MAIL_CONFIG_PATH, encoding='utf-8') as f:
+			cfg = dict(_MAIL_CONFIG_DEFAULT)
+			cfg.update(json.load(f))
+			return cfg
+	except Exception:
+		return dict(_MAIL_CONFIG_DEFAULT)
+
+
 def parse_sp_date(val):
 	"""
 	SharePoint の日付値（/Date(ms)/ 形式または ISO 形式）を date オブジェクトへ変換する。
@@ -62,6 +85,11 @@ def parse_sp_date(val):
 
 
 def main():
+	# 改修: 事務局宛先(To)先頭アドレス(署名の問い合わせ先用)・アラートメールCCをコンソール設定から取得
+	mail_config = load_mail_config()
+	pmo_contact = (mail_config.get('pmoTo') or '').split(',')[0].strip()
+	alert_cc = mail_config.get('alertCc') or ''
+
 	# 翌日の日付を取得
 	tomorrow = date.today() + timedelta(days=1)
 
@@ -104,9 +132,8 @@ def main():
 			print(f'スキップ（申請者メールアドレス未設定）: {machine}')
 			continue
 
-		# 動作確認用: 宛先を固定。確認後は applicant_email に変更すること
-		to_address = 'hayato_funao_gst@jp.honda'
-		# 本来の宛先: applicant_email
+		# 改修: 動作確認用の固定宛先を廃止し、本来の宛先（申請者アドレス）へ戻す
+		to_address = applicant_email
 
 		# 改修(メール文面): 申請者名（取得不可時は省略）
 		# 候補列: 申請者名系の内部名（実機確認後に正式名へ変更すること）
@@ -119,10 +146,11 @@ def main():
 		app_url = os.environ.get('APP_URL', 'http://RC25020358:3000/')
 
 		# 改修(メール文面): 共通署名ブロック（JS側 mailSignature() と同内容）
+		# 改修: お問い合わせ先はコンソール設定の事務局宛先(pmoTo)先頭アドレスへ統一
 		signature = (
 			'\n────────────────────\n'
 			'統合HILS予約管理表事務局\n'
-			f'お問い合わせ: hayato_funao_gst@jp.honda\n'
+			f'お問い合わせ: {pmo_contact}\n'
 			f'予約管理表: {app_url}\n'
 			'────────────────────'
 		)
@@ -145,7 +173,8 @@ def main():
 			alert_url = f'{app_url}?id={reservation_id}' if reservation_id else app_url
 			body_lines.append(f' 期間変更・利用終了報告: {alert_url}')
 			mail_body = '\n'.join(body_lines) + signature
-			run_sp_command('send_mail', to_address, subject, mail_body)
+			# 改修: アラートメールCC（コンソール設定）を付与
+			run_sp_command('send_mail', to_address, subject, mail_body, alert_cc)
 			print(f'アラートメール送信完了: {machine} ({start_date.isoformat()}〜{end_str}) → {to_address}')
 			sent_count += 1
 		except Exception as e:
