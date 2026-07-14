@@ -259,6 +259,22 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 改修: PATCH /api/action-item/:id/cancel — 利用取消依頼の取消理由を事務局アクションリストへ記録
+  // （期間変更申請と同様に理由のみを保存し、ステータスは変更しない。ステータス遷移は事務局の削除操作時に行う）
+  const cancelMatch = pathname.match(/^\/api\/action-item\/(\d+)\/cancel$/);
+  if (cancelMatch && method === 'PATCH') {
+    if (IS_DUMMY) return jsonOk(res, { success: true, dummy: true });
+    try {
+      const { reason } = await readBody(req);
+      await sp.runCommand('update_action_cancel', [cancelMatch[1], reason || '']);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('PATCH /api/action-item/cancel:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
   // 改修: GET /api/mail-config — コンソールで設定した事務局宛先(To)・CCをフロントへ配布
   // （alertCcはPythonバッチ側のみで使用するため配布対象外）
   if (pathname === '/api/mail-config' && method === 'GET') {
@@ -471,8 +487,8 @@ const server = http.createServer(async (req, res) => {
       if (data === null) {
         // 未初期化時: westは既定シードで新規作成、southは空で返す（南ルームはSP予約から動的生成されるため）
         data = room === 'west'
-          ? { machines: DEFAULT_MACHINES.slice(), spares: DEFAULT_SPARES.slice(), assignees: {} }
-          : { machines: [], spares: [], assignees: {} };
+          ? { machines: DEFAULT_MACHINES.slice(), spares: DEFAULT_SPARES.slice(), assignees: {}, addresses: {} }
+          : { machines: [], spares: [], assignees: {}, addresses: {} };
         writeMachineCsv(room, data);
       }
       jsonOk(res, data);
@@ -704,14 +720,25 @@ function parseMachineCsv(room) {
   }
   // UTF-8 BOM（U+FEFF）を除去してから分割
   const lines = raw.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim() !== '');
-  if (lines.length < 1) return { machines: [], spares: [], assignees: {} };
+  if (lines.length < 1) return { machines: [], spares: [], assignees: {}, addresses: {} };
+  // 改修: アドレス列追加（5列: 種別,筐体名,担当者,アドレス,表示順）に伴い、
+  // 旧形式（4列: 種別,筐体名,担当者,表示順）との後方互換をヘッダ列数で判定する
+  const headerCols     = splitCsvLine(lines[0]).length;
+  const hasAddressCol  = headerCols >= 5;
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const vals = splitCsvLine(lines[i]);
-    rows.push({
+    rows.push(hasAddressCol ? {
       type:     unquote(vals[0] || ''),
       name:     unquote(vals[1] || ''),
       assignee: unquote(vals[2] || ''),
+      address:  unquote(vals[3] || ''),
+      order:    parseInt(unquote(vals[4] || '0'), 10) || 0,
+    } : {
+      type:     unquote(vals[0] || ''),
+      name:     unquote(vals[1] || ''),
+      assignee: unquote(vals[2] || ''),
+      address:  '',  // 旧形式はアドレス列を持たないため空
       order:    parseInt(unquote(vals[3] || '0'), 10) || 0,
     });
   }
@@ -720,16 +747,18 @@ function parseMachineCsv(room) {
   const machines  = [];
   const spares    = [];
   const assignees = {};
+  const addresses = {};  // 改修: 筐体ごとの手入力識別情報（メールアドレスとは別物）
   rows.forEach(r => {
     if (!r.name) return;
     if (r.type === 'spare') spares.push(r.name);
     else machines.push(r.name);
     if (r.assignee) assignees[r.name] = r.assignee;
+    if (r.address)  addresses[r.name] = r.address;
   });
-  return { machines, spares, assignees };
+  return { machines, spares, assignees, addresses };
 }
 
-// 筐体マスタ（{machines, spares, assignees}）をCSVへルーム単位で全置換保存する
+// 筐体マスタ（{machines, spares, assignees, addresses}）をCSVへルーム単位で全置換保存する
 function writeMachineCsv(room, data) {
   const csvPath = machineCsvPath(room);
   if (!csvPath) return;
@@ -738,15 +767,17 @@ function writeMachineCsv(room, data) {
   const machines  = Array.isArray(data.machines) ? data.machines : [];
   const spares    = Array.isArray(data.spares)   ? data.spares   : [];
   const assignees = (data.assignees && typeof data.assignees === 'object') ? data.assignees : {};
-  const headerLine = ['種別', '筐体名', '担当者', '表示順'].map(quoteVal).join(',');
+  // 改修: アドレス（筐体ごとの手入力識別情報。メールアドレスとは別物）
+  const addresses = (data.addresses && typeof data.addresses === 'object') ? data.addresses : {};
+  const headerLine = ['種別', '筐体名', '担当者', 'アドレス', '表示順'].map(quoteVal).join(',');
   let order = 0;
   const dataLines = [];
   // メイン筐体→予備の順で表示順を振り直す（グリッドの行順と一致させる）
   machines.forEach(name => {
-    dataLines.push(['machine', name, assignees[name] || '', order++].map(quoteVal).join(','));
+    dataLines.push(['machine', name, assignees[name] || '', addresses[name] || '', order++].map(quoteVal).join(','));
   });
   spares.forEach(name => {
-    dataLines.push(['spare', name, assignees[name] || '', order++].map(quoteVal).join(','));
+    dataLines.push(['spare', name, assignees[name] || '', addresses[name] || '', order++].map(quoteVal).join(','));
   });
   // UTF-8 BOMを先頭に付与（日本語Windowsのアプリが文字化けしないよう）
   const bom = '﻿';
@@ -782,6 +813,8 @@ function normalizeSpItem(item) {
     user:     item['OData__x7533__x8acb__x8005__x540d_']        || '',
     // 改修: 使用履歴リストに新規追加された借用者名列を取得（承知/辞退ページで表示）
     borrower: item['OData__x501f__x7528__x8005__x540d_']        || '',
+    // 改修: アドレス列（筐体ごとの手入力識別情報。メールアドレスとは別物。南HILSルームのみ使用）
+    address:  item['OData__x30a2__x30c9__x30ec__x30b9_']         || '',
     // 改修(承知/辞退表示不具合): 事務局アクションリストID列を返却し、承知/辞退ページの予約突合キーに使う
     actionListId: item['OData__x4e8b__x52d9__x5c40__x30a2__x30'] != null
         ? item['OData__x4e8b__x52d9__x5c40__x30a2__x30'] : null,
@@ -798,6 +831,8 @@ function normalizeActionItem(item) {
     machineType: item['OData__x6a5f__x7a2e__x547c__x79f0_']                                         || '',  // 機種呼称（ラベル生成用）
     // 改修: 1案件=1予約ガードの判定用にステータス列を追加（update_action_statusと同一の内部名）
     status:      item['OData__x30b9__x30c6__x30fc__x30bf__x30']                                     || '',
+    // 改修: 利用取消依頼の取消理由列。事務局が予約削除時にこの有無でステータス遷移先を判定する
+    cancelReason: item['OData__x53d6__x6d88__x7406__x7531_']                                        || '',
   };
 }
 
@@ -822,6 +857,9 @@ function toSpFields(data) {
   if (data.applicant !== undefined) f['OData__x7533__x8acb__x8005__x540d_']     = data.applicant;
   // 改修: 使用者アドレス列（申請者メールアドレス）へ書き込み。空の場合はスキップ（編集時の意図しないブランク上書き防止）
   if (data.email) f['OData__x7533__x8acb__x8005__x30a2__x30'] = data.email;
+  // 改修: アドレス列（筐体ごとの手入力識別情報。メールアドレスとは別物。南HILSルームのみ）へ書き込み。
+  // 空の場合はスキップ（既存emailと同方針。編集時の意図しないブランク上書き防止）
+  if (data.address) f['OData__x30a2__x30c9__x30ec__x30b9_'] = data.address;
   // 改修: 事務局アクションリストID列（内部名 _x4e8b__x52d9__x5c40__x30a2__x30）へSP内部IDを数値で書き込み。未設定はスキップ
   if (data.actionListId != null) f['OData__x4e8b__x52d9__x5c40__x30a2__x30'] = data.actionListId;
   // color は使用履歴リストに列がないため書き込みスキップ

@@ -756,6 +756,22 @@ def main():
                 _update_item(sess, action_site, action_guid, item_id, fields)
                 print(json.dumps({'ok': True}))
 
+        # 改修: 事務局アクションリストに利用取消依頼の取消理由を記録する。
+        # 期間変更申請（update_action_extend）と異なり、ステータス列は更新しない。
+        # ステータス遷移は事務局が予約を削除したタイミングで別途 update_action_status が呼ばれる。
+        elif cmd == 'update_action_cancel':
+            item_id     = sys.argv[2]
+            cancel_reason = sys.argv[3]  # 取消理由
+            action_site = os.environ.get('SP_ACTION_SITE', SITE_URL).rstrip('/')
+            action_guid = os.environ.get('SP_ACTION_GUID', '')
+            if not action_guid:
+                print(json.dumps({'error': 'SP_ACTION_GUID が未設定'}, ensure_ascii=False))
+            else:
+                # 取消理由列（内部名は申請理由列 OData__x7533__x8acb__x7406__x7531_ と同系。実機はget_fieldsで照合すること）
+                fields = {'OData__x53d6__x6d88__x7406__x7531_': cancel_reason}
+                _update_item(sess, action_site, action_guid, item_id, fields)
+                print(json.dumps({'ok': True}))
+
         else:
             print(json.dumps({'error': f'不明なコマンド: {cmd}'}))
 

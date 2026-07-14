@@ -209,7 +209,37 @@ body {
   z-index: 5;
 }
 
-/* 改修: 担当者列（筐体列の右隣に sticky 固定） */
+/* 改修: アドレス列（筐体列の右隣に sticky 固定。筐体ごとの手入力識別情報でメールアドレスとは別物。南HILSルームのみ表示） */
+.gantt-table th.address-col,
+.gantt-table td.address-col {
+  width: 80px;
+  min-width: 70px;
+  background: #e2e8f0;
+  font: 11px 'Meiryo UI', sans-serif;
+  padding: 2px 6px;
+  text-align: left;
+  border-right: 1px solid #94a3b8;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: sticky;
+  left: var(--address-left, 169px); /* 改修: 筐体列の実描画幅に追従（applyDateColWidthがCSS変数を設定）。フォールバック169px */
+  z-index: 3;
+  box-shadow: inset 1px 0 0 0 #d1d5db;
+}
+.gantt-table thead th.address-col {
+  background: #e2e8f0;
+  border-bottom: 1px solid #94a3b8;
+  height: 66px;
+  font: bold 11px 'Meiryo UI', sans-serif;
+  z-index: 5;
+}
+/* 改修: アドレス列 非表示クラス（南HILSルーム以外で全行のアドレス列を一括非表示） */
+.gantt-table.address-hidden th.address-col,
+.gantt-table.address-hidden td.address-col { display: none; }
+
+/* 改修: 担当者列（アドレス列の右隣に sticky 固定） */
 .gantt-table th.assignee-col,
 .gantt-table td.assignee-col {
   width: 80px;
@@ -224,7 +254,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   position: sticky;
-  left: var(--assignee-left, 169px); /* 改修(第7回追補2): 筐体列の実描画幅に追従（applyDateColWidth が CSS変数を設定）。フォールバック169px */
+  left: var(--assignee-left, 169px); /* 改修(第7回追補2): 筐体列＋アドレス列の実描画幅に追従（applyDateColWidth が CSS変数を設定）。フォールバック169px */
   z-index: 3; /* 改修: 予約バー選択セル(z-index:2)より前面にして固定列が覆われないよう修正 */
   box-shadow: inset 1px 0 0 0 #d1d5db; /* 改修: border-collapse では sticky に追従しないため box-shadow でセルと同じ縦罫線（#d1d5db）を再現 */
 }
@@ -249,6 +279,8 @@ body {
    対象はsticky指定のある4セレクタのみに限定する（他の予約セルの位置基準に影響させないため） */
 .gantt-table.capturing th.machine-col,
 .gantt-table.capturing td.machine-col,
+.gantt-table.capturing th.address-col,
+.gantt-table.capturing td.address-col,
 .gantt-table.capturing th.assignee-col,
 .gantt-table.capturing td.assignee-col,
 .gantt-table.capturing th.month-col,
@@ -986,6 +1018,15 @@ body {
   font-size: 11px;
   color: #64748b;
   margin: 0 0 8px;
+}
+/* 改修: 承知前の注意事項（終了メール返信・初期状態復帰確認）を強調表示 */
+.accept-warning {
+  color: #b91c1c;
+  font-weight: bold;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  padding: 8px 10px;
 }
 .accept-info-table {
   width: 100%;

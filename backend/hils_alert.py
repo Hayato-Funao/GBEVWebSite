@@ -127,6 +127,8 @@ def main():
 
 		# 申請者メールアドレス（使用者アドレス列: 32文字截断の内部名）
 		applicant_email = item.get('OData__x7533__x8acb__x8005__x30a2__x30', '')
+		# 改修: アドレス列（筐体ごとの手入力識別情報。メールアドレスとは別物。南HILSルームのみ使用）
+		address = item.get('OData__x30a2__x30c9__x30ec__x30b9_', '')
 
 		if not applicant_email:
 			print(f'スキップ（申請者メールアドレス未設定）: {machine}')
@@ -157,7 +159,9 @@ def main():
 
 		try:
 			# 改修(メール文面): 提案資料⑨に合わせて件名・本文を更新
-			subject = f'【統合HILS（61号棟南HILSルーム）予約】使用期間終了前日のご案内＜{machine}＞'
+			# 改修: アドレス（筐体ごとの手入力識別情報。メールアドレスとは別物）があれば＜アドレス 筐体名＞に拡張
+			subject_inner = f'{address} {machine}' if address else machine
+			subject = f'【統合HILS（61号棟南HILSルーム）予約】使用期間終了前日のご案内＜{subject_inner}＞'
 			body_lines = []
 			if applicant_name:
 				body_lines.append(f'{applicant_name} 様\n')

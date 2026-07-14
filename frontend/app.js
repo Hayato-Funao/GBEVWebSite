@@ -149,12 +149,14 @@ async function fetchMachineMaster(room) {
       machines:  Array.isArray(data.machines)  ? data.machines  : [],
       spares:    Array.isArray(data.spares)    ? data.spares    : [],
       assignees: (data.assignees && typeof data.assignees === 'object') ? data.assignees : {},
+      // 改修: アドレス（筐体ごとの手入力識別情報。メールアドレスとは別物）
+      addresses: (data.addresses && typeof data.addresses === 'object') ? data.addresses : {},
     };
   } catch (e) {
     console.error('筐体マスタCSV取得失敗:', e);
     return room === 'west'
-      ? { machines: HILS_MACHINES.slice(), spares: HILS_SPARES.slice(), assignees: {} }
-      : { machines: [], spares: [], assignees: {} };
+      ? { machines: HILS_MACHINES.slice(), spares: HILS_SPARES.slice(), assignees: {}, addresses: {} }
+      : { machines: [], spares: [], assignees: {}, addresses: {} };
   }
 }
 
@@ -164,9 +166,11 @@ async function loadRoomMaster() {
   state.machinesByRoom  = { west: west.machines,  south: south.machines };
   state.sparesByRoom    = { west: west.spares,    south: south.spares };
   state.assigneesByRoom = { west: west.assignees, south: south.assignees };
+  // 改修: アドレスマップもルーム別に格納
+  state.addressesByRoom = { west: west.addresses, south: south.addresses };
 }
 
-// 指定ルームの筐体マスタ（machines/spares/assignees）をサーバーへ全置換保存する
+// 指定ルームの筐体マスタ（machines/spares/assignees/addresses）をサーバーへ全置換保存する
 // 既存のCSV書き込みAPI（apiAppendLegendColor等）と同様、fire-and-forgetで送信し失敗はログのみ
 async function saveRoomMaster(room) {
   try {
@@ -177,6 +181,8 @@ async function saveRoomMaster(room) {
         machines:  state.machinesByRoom[room]  || [],
         spares:    state.sparesByRoom[room]    || [],
         assignees: state.assigneesByRoom[room] || {},
+        // 改修: アドレス（筐体ごとの手入力識別情報。メールアドレスとは別物）
+        addresses: state.addressesByRoom[room] || {},
       }),
     });
   } catch (e) {
@@ -190,6 +196,8 @@ function saveMachines() { saveRoomMaster(state.currentRoom); }
 function saveSpares() { saveRoomMaster(state.currentRoom); }
 // 現在ルームの担当者マップを保存する
 function saveAssignees() { saveRoomMaster(state.currentRoom); }
+// 改修: 現在ルームのアドレスマップを保存する（筐体ごとの手入力識別情報。メールアドレスとは別物）
+function saveAddresses() { saveRoomMaster(state.currentRoom); }
 // 改修: 担当者列の表示/非表示フラグをlocalStorageから読み込む（未設定・不正時は true で表示）
 function loadAssigneeVisible() {
   try {
@@ -204,6 +212,13 @@ function applyAssigneeVisibility(visible) {
   if (!tbl) return;
   // visible=false のとき assignee-hidden クラスを付与して列を非表示にする
   tbl.classList.toggle('assignee-hidden', !visible);
+}
+
+// 改修: アドレス列の表示/非表示を #gantt-table の CSS クラスで切り替える（南HILSルームのみ表示）
+function applyAddressVisibility(room) {
+  const tbl = document.getElementById('gantt-table');
+  if (!tbl) return;
+  tbl.classList.toggle('address-hidden', room !== 'south');
 }
 
 // ────────────────────────────────────────────
@@ -237,9 +252,12 @@ const state = {
   machinesByRoom: { west: [], south: [] },   // 改修(第4回): ルーム別メイン筐体リスト
   sparesByRoom:   { west: [], south: [] },   // 改修(第4回): ルーム別予備リスト
   assigneesByRoom: { west: {}, south: {} },  // 改修(第4回): ルーム別担当者マップ
+  // 改修: ルーム別アドレスマップ（筐体ごとに手入力する識別情報。メールアドレスとは別物。南HILSルームのみ使用）
+  addressesByRoom: { west: {}, south: {} },
   machines:      [],               // メイン筐体リスト（currentRoomへのビュー。syncRoomViewsで更新）
   spares:        [],               // 改修: 予備リスト（currentRoomへのビュー。syncRoomViewsで更新）
   assignees:     {},               // 改修: 担当者マップ（currentRoomへのビュー。syncRoomViewsで更新）
+  addresses:     {},               // 改修: アドレスマップ（currentRoomへのビュー。syncRoomViewsで更新）
   selectedCells: new Set(),
   selectedResId: null,
   anchorCell:    null,
@@ -285,6 +303,8 @@ function syncRoomViews() {
   state.machines  = state.machinesByRoom[state.currentRoom];
   state.spares    = state.sparesByRoom[state.currentRoom];
   state.assignees = state.assigneesByRoom[state.currentRoom];
+  // 改修: アドレスマップも現在ルームのビューへバインド
+  state.addresses = state.addressesByRoom[state.currentRoom];
 }
 
 // ────────────────────────────────────────────
@@ -401,9 +421,18 @@ async function loadMailConfig() {
 }
 
 // 改修(メール文面): 共通件名ビルダ。筐体名があれば末尾に＜筐体名＞を付与
-function buildMailSubject(title, machine) {
-	const suffix = machine ? `＜${machine}＞` : '';
+// 改修: アドレス（筐体ごとの手入力識別情報。メールアドレスとは別物）があれば＜アドレス 筐体名＞に拡張
+function buildMailSubject(title, machine, address) {
+	const inner  = (address && machine) ? `${address} ${machine}` : (machine || '');
+	const suffix = inner ? `＜${inner}＞` : '';
 	return `【統合HILS（61号棟南HILSルーム）予約】${title}${suffix}`;
+}
+
+// 改修: メール件名用アドレスを取得する共通ヘルパー。
+// state.addresses は syncRoomViews() で現在ルームのアドレスマップにバインドされているため、
+// 西HILSルームでは常に空（アドレス列は南HILSルームのみ使用）となり自然にフォールバックする
+function resolveMailAddress(machine) {
+	return (machine && state.addresses[machine]) || '';
 }
 
 // 改修(メール文面): 全メール末尾の共通署名ブロック
@@ -502,19 +531,23 @@ async function apiAppendLegendColor(resData) {
         marks:     resData.marks     || [],
       }),
     });
+    return true;  // 改修: 呼び出し元で成否判定できるよう戻り値を追加（筐体名リネーム時の失敗カウント用）
   } catch (e) {
     console.error('凡例色リストCSV追記失敗:', e);
+    return false;
   }
 }
 
 // 改修(起動連携): 凡例色リストCSVの該当行（machine+start+end）を削除する
 async function apiDeleteLegendColor(machine, start, end) {
-  if (!machine || !start || !end) return;
+  if (!machine || !start || !end) return false;
   try {
     const params = new URLSearchParams({ machine, start, end });
     await fetch(`/api/legend-colors?${params}`, { method: 'DELETE' });
+    return true;  // 改修: 呼び出し元で成否判定できるよう戻り値を追加（筐体名リネーム時の失敗カウント用）
   } catch (e) {
     console.error('凡例色リストCSV行削除失敗:', e);
+    return false;
   }
 }
 
@@ -552,19 +585,23 @@ async function apiAppendStatus(resData) {
         marks:     resData.marks     || [],
       }),
     });
+    return true;  // 改修: 呼び出し元で成否判定できるよう戻り値を追加（筐体名リネーム時の失敗カウント用）
   } catch (e) {
     console.error('状態リストCSV追記失敗:', e);
+    return false;
   }
 }
 
 // 改修(状態分離): 状態リストCSVの該当行（machine+start+end）を削除する
 async function apiDeleteStatus(machine, start, end) {
-  if (!machine || !start || !end) return;
+  if (!machine || !start || !end) return false;
   try {
     const params = new URLSearchParams({ machine, start, end });
     await fetch(`/api/status-list?${params}`, { method: 'DELETE' });
+    return true;  // 改修: 呼び出し元で成否判定できるよう戻り値を追加（筐体名リネーム時の失敗カウント用）
   } catch (e) {
     console.error('状態リストCSV行削除失敗:', e);
+    return false;
   }
 }
 
@@ -585,6 +622,8 @@ function buildSpPayload(resData) {
     user:      resData.user      || '',  // 借用者（f-user）
     applicant: resData.applicant || '',  // 申請者（f-applicant）
     email:     resData.email     || '',  // 改修: 使用者アドレス列へ申請者メールアドレスを転記
+    // 改修: アドレス列（筐体ごとの手入力識別情報。メールアドレスとは別物。南HILSルームのみ）
+    address:   resData.address   || '',
     // 改修: 事務局アクションリストID列へ、起動URLのid値（SP内部ID）を数値で転記。未起動・非数値時は送らない
     actionListId: (state.actionTitleId && /^\d+$/.test(state.actionTitleId)) ? Number(state.actionTitleId) : undefined,
   };
@@ -610,7 +649,7 @@ async function apiCreate(resData) {
 
 // 改修(SP連携マージ): SP のアイテムを更新する
 async function apiUpdate(spId, resData) {
-  if (spId == null) return;
+  if (spId == null) return false;
   try {
     const res = await fetch(`/api/reservations/${spId}`, {
       method:  'PATCH',
@@ -618,9 +657,11 @@ async function apiUpdate(spId, resData) {
       body:    JSON.stringify(buildSpPayload(resData)),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return true;  // 改修: 呼び出し元で成否判定できるよう戻り値を追加（筐体名リネーム時の失敗カウント用）
   } catch (e) {
     console.error('SP更新失敗:', e);
     setStatus('SP更新に失敗しました（ローカルには保存済み）', '#ef4444');
+    return false;
   }
 }
 
@@ -748,6 +789,11 @@ function renderCalendar() {
   colMachine.className = 'col-machine';
   colMachine.style.width = '170px';
   cg.appendChild(colMachine);
+  // 改修: アドレス列（筐体ごとの手入力識別情報。メールアドレスとは別物。南HILSルームのみ表示、幅80px/非表示0px）
+  const colAddress = document.createElement('col');
+  colAddress.className = 'col-address';
+  colAddress.style.width = table.classList.contains('address-hidden') ? '0px' : '80px';
+  cg.appendChild(colAddress);
   // 担当者列（表示時80px / 非表示時0px）
   const colAssignee = document.createElement('col');
   colAssignee.className = 'col-assignee';
@@ -774,6 +820,13 @@ function renderCalendar() {
   thMachine.rowSpan     = 2;
   thMachine.textContent = '筐体';
   monthRow.appendChild(thMachine);
+
+  // 改修: アドレス列見出し（筐体ごとの手入力識別情報。メールアドレスとは別物）
+  const thAddress = document.createElement('th');
+  thAddress.className   = 'address-col';
+  thAddress.rowSpan     = 2;
+  thAddress.textContent = 'アドレス';
+  monthRow.appendChild(thAddress);
 
   const thAssignee = document.createElement('th');
   thAssignee.className   = 'assignee-col';
@@ -891,9 +944,25 @@ function renderCalendar() {
         editInput.focus();
         editInput.select();
 
-        function commitEdit() {
+        // 改修: 筐体名リネーム時に予約データ（統合HILS使用履歴リスト／凡例色リストCSV／状態リストCSV）が
+        // 旧筐体名のまま放置されると、次回起動時の南ルーム自動同期で旧筐体名が幽霊行として復活する不具合があった。
+        // 対象予約がある場合は確認のうえ、新筐体名で書き戻し・旧筐体名側を削除する（asyncに変更）
+        async function commitEdit() {
           const newName = editInput.value.trim();
           if (newName && newName !== oldName) {
+            // 改修: リネーム対象筐体・対象ルームに紐づく予約を洗い出す
+            const affected = state.reservations.filter(res =>
+              res.machine === oldName && (res.room || 'west') === state.currentRoom
+            );
+            // 改修: 既存予約がある場合は確認。キャンセルならリネーム自体を中止する
+            if (affected.length > 0 && !confirm(
+              `筐体名「${oldName}」には${affected.length}件の予約データがあります。\n` +
+              `リネームすると、統合HILS使用履歴リスト等の予約データも新しい筐体名「${newName}」に更新されます。\n` +
+              `よろしいですか？`
+            )) {
+              renderCalendar();
+              return;
+            }
             if (rowIdx < state.machines.length) {
               state.machines[rowIdx] = newName;
               saveMachines();
@@ -912,6 +981,42 @@ function renderCalendar() {
               delete state.assignees[oldName];
               saveAssignees();
             }
+            // 改修: 筐体名変更時にアドレスマップのキーも追従させる
+            if (Object.prototype.hasOwnProperty.call(state.addresses, oldName)) {
+              state.addresses[newName] = state.addresses[oldName];
+              delete state.addresses[oldName];
+              saveAddresses();
+            }
+            renderCalendar();  // 改修: ローカル表示を先に確定させてから、以下でSP/CSVへ反映する
+
+            // 改修: 対象予約を統合HILS使用履歴リスト／凡例色リストCSV／状態リストCSVへ新筐体名で反映
+            if (affected.length > 0) {
+              showBusy('予約データを更新中...');
+              let failCount = 0;
+              for (const res of affected) {
+                const renamed = { ...res, machine: newName };
+                let ok = true;
+                if ((res.status || 'normal') === 'normal') {
+                  // 通常予約: SPの使用履歴リスト＋凡例色リストCSVを新筐体名側へ、旧筐体名側は削除
+                  if (res.spId != null) ok = await apiUpdate(res.spId, renamed) && ok;
+                  ok = await apiAppendLegendColor(renamed) && ok;
+                  ok = await apiDeleteLegendColor(oldName, res.start, res.end) && ok;
+                } else {
+                  // 予備日/設備故障/休日: 状態リストCSVのみ（SP未連携）
+                  ok = await apiAppendStatus(renamed) && ok;
+                  ok = await apiDeleteStatus(oldName, res.start, res.end) && ok;
+                }
+                if (!ok) failCount++;
+              }
+              hideBusy();
+              setStatus(
+                failCount > 0
+                  ? `筐体名は変更しましたが、${failCount}/${affected.length}件の予約データ更新に失敗しました。手動で確認してください。`
+                  : `筐体名を変更し、${affected.length}件の予約データを更新しました。`,
+                failCount > 0 ? 'red' : undefined
+              );
+            }
+            return;
           }
           renderCalendar();
         }
@@ -925,6 +1030,47 @@ function renderCalendar() {
     }
 
     tr.appendChild(tdMachine);
+
+    // 改修: アドレスセル（筐体ごとの手入力識別情報。メールアドレスとは別物。南HILSルームのみ）
+    const tdAddress = document.createElement('td');
+    tdAddress.className = 'address-col';
+    tdAddress.title     = isAdmin ? 'アドレス（ダブルクリックで編集）' : 'アドレス';
+    tdAddress.textContent = state.addresses[machine] || '';
+
+    if (isAdmin) {
+      tdAddress.addEventListener('dblclick', () => {
+        const currentVal   = state.addresses[machine] || '';
+        const addressInput = document.createElement('input');
+        addressInput.type      = 'text';
+        addressInput.value     = currentVal;
+        addressInput.className = 'address-edit-input';
+        tdAddress.textContent   = '';
+        tdAddress.appendChild(addressInput);
+        addressInput.focus();
+        addressInput.select();
+
+        function commitAddress() {
+          const newVal = addressInput.value.trim();
+          if (newVal !== currentVal) {
+            if (newVal) {
+              state.addresses[machine] = newVal;
+            } else {
+              delete state.addresses[machine];
+            }
+            saveAddresses();
+          }
+          renderCalendar();
+        }
+
+        addressInput.addEventListener('keydown', e => {
+          if (e.key === 'Enter')  { addressInput.blur(); }
+          if (e.key === 'Escape') { renderCalendar(); }
+        });
+        addressInput.addEventListener('blur', commitAddress);
+      });
+    }
+
+    tr.appendChild(tdAddress);
 
     // 担当者セル
     const tdAssignee = document.createElement('td');
@@ -1138,6 +1284,11 @@ function renderCalendar() {
     });
     addTdHeader.appendChild(addBtn);
     addTr.appendChild(addTdHeader);
+
+    // 改修: アドレス列（筐体追加行の空セル）
+    const addTdAddress = document.createElement('td');
+    addTdAddress.className = 'address-col machine-add-cell';
+    addTr.appendChild(addTdAddress);
 
     const addTdAssignee = document.createElement('td');
     addTdAssignee.className = 'assignee-col machine-add-cell';
@@ -1566,8 +1717,10 @@ function updateInfoPanel() {
 // sticky固定列の合計幅を返す
 function getStickyWidth(wrapper) {
   const mc = wrapper.querySelector('th.machine-col');
+  // 改修: アドレス列（筐体列と担当者列の間、南HILSルームのみ表示）もsticky幅に加算
+  const adc = wrapper.querySelector('th.address-col');
   const ac = wrapper.querySelector('th.assignee-col');
-  return (mc ? mc.offsetWidth : 170) + (ac ? ac.offsetWidth : 80);
+  return (mc ? mc.offsetWidth : 170) + (adc ? adc.offsetWidth : 0) + (ac ? ac.offsetWidth : 80);
 }
 
 // 指定日付の列が gantt-wrapper の左端（sticky列の右側）に来るよう水平スクロール
@@ -1603,9 +1756,11 @@ function applyDateColWidth() {
   const table   = document.getElementById('gantt-table');
   const wrapper = document.querySelector('.gantt-wrapper');
   if (!table || !wrapper) return;
+  // 改修: アドレス列（南HILSルームのみ表示）の幅も加算対象に追加
+  const addressW  = table.classList.contains('address-hidden') ? 0 : 80;
   const assigneeW = table.classList.contains('assignee-hidden') ? 0 : 80;
   const machineW  = 170;
-  const avail     = wrapper.clientWidth - machineW - assigneeW;
+  const avail     = wrapper.clientWidth - machineW - addressW - assigneeW;
   const w         = Math.max(DATE_COL_MIN, Math.floor(avail / 31));
   // CSS変数に設定（th.date-col / td.gantt-cell が参照）
   table.style.setProperty('--date-col-w', w + 'px');
@@ -1615,11 +1770,17 @@ function applyDateColWidth() {
   // テーブル全体の px 幅を設定して fixed レイアウトを発火させる
   // これにより colgroup 幅が厳密に反映され、日付ヘッダと予約バーの列ズレが解消する
   const totalDateCols = state.viewDates ? state.viewDates.length : 0;
-  table.style.width = (machineW + assigneeW + totalDateCols * w) + 'px';
+  table.style.width = (machineW + addressW + assigneeW + totalDateCols * w) + 'px';
   // 改修(第7回追補2): 担当者列 sticky left を筐体列の実描画幅に追従させる
   // ハードコードの left:169px がずれた場合でも隙間なく密着させるための恒久対策
   const machineTh = table.querySelector('thead th.machine-col');
-  if (machineTh) table.style.setProperty('--assignee-left', machineTh.offsetWidth + 'px');
+  const addressTh = table.querySelector('thead th.address-col');
+  if (machineTh) table.style.setProperty('--address-left', machineTh.offsetWidth + 'px');
+  if (machineTh) {
+    // 改修: 担当者列 sticky left は「筐体列幅＋アドレス列幅（非表示時は0）」に追従させる
+    const addressOffsetW = addressTh ? addressTh.offsetWidth : 0;
+    table.style.setProperty('--assignee-left', (machineTh.offsetWidth + addressOffsetW) + 'px');
+  }
 }
 
 // 改修(第7回): 前月ボタン → 現在表示月の前の月初へスクロール
@@ -1681,6 +1842,8 @@ document.getElementById('room-select').addEventListener('change', e => {
   if (room === state.currentRoom) return;
   state.currentRoom = room;
   syncRoomViews();
+  // 改修: アドレス列は南HILSルームのみ表示（renderCalendar前にクラスを確定させる）
+  applyAddressVisibility(room);
   clearSelection();
   renderCalendar();
 });
@@ -1842,8 +2005,9 @@ document.getElementById('info-extend-btn').addEventListener('click', () => {
     document.getElementById('ext-end').value   = res.end.split('T')[0];
   }
   document.getElementById('ext-reason').value = '';
-  // 改修: form-pane・プレースホルダを排他非表示にしてextend-paneを表示
+  // 改修: form-pane・cancel-pane・プレースホルダを排他非表示にしてextend-paneを表示
   document.getElementById('form-pane').classList.add('hidden');
+  document.getElementById('cancel-pane').classList.add('hidden');
   document.getElementById('form-empty').classList.add('hidden');
   document.getElementById('extend-pane').classList.remove('hidden');
   state.formMode = null;  // 改修: 期間変更申請中は日付自動連動を無効
@@ -1884,7 +2048,7 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
     const curEnd     = curRes?.end     || '';
     await sendMail(
       mailConfig.pmoTo,
-      buildMailSubject('期間変更申請の通知', extMachine),
+      buildMailSubject('期間変更申請の通知', extMachine, resolveMailAddress(extMachine)),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より期間変更の申請がありました。\n\n` +
       `■対象予約\n` +
@@ -1915,43 +2079,66 @@ document.getElementById('ext-cancel').addEventListener('click', () => {
 
 // 改修(マージ): info-xpx-btn は撤去のためリスナ削除
 
-// 改修(メール文面): 利用取消依頼ボタン — PMOへ通知メール送信＋ステータスを91.申請者取り下げに更新（⑥）
-document.getElementById('info-cancel-btn').addEventListener('click', async () => {
-  if (!confirm('この予約の利用取消を依頼しますか？')) return;
+// 改修: 利用取消依頼ボタン — cancel-paneを開いて取消理由の入力を求める（送信処理はcancel-ok側）
+// ステータスは変更しない。ステータス遷移は事務局が予約を削除したタイミングに移した（deleteReservation参照）
+document.getElementById('info-cancel-btn').addEventListener('click', () => {
+  document.getElementById('cancel-reason').value = '';
+  // 改修: form-pane・extend-pane・プレースホルダを排他非表示にしてcancel-paneを表示
+  document.getElementById('form-pane').classList.add('hidden');
+  document.getElementById('extend-pane').classList.add('hidden');
+  document.getElementById('form-empty').classList.add('hidden');
+  document.getElementById('cancel-pane').classList.remove('hidden');
+  state.formMode = null;
+});
+
+// 改修: 利用取消依頼「依頼」ボタン — 取消理由を事務局アクションリストへ記録＋PMOへ通知メール送信
+// （期間変更申請と同様に理由を残す。ステータスはここでは変更しない）
+document.getElementById('cancel-ok').addEventListener('click', async () => {
+  const cancelReason = document.getElementById('cancel-reason').value.trim();
+  if (!cancelReason) {
+    alert('取消理由を入力してください');
+    return;
+  }
   const cancelRes     = state.selectedResId != null ? state.reservations[state.selectedResId] : null;
   const cancelMachine = cancelRes?.machine || '';
   showBusy('利用取消依頼を送信中...');  // 改修: 処理中オーバーレイ表示
   try {
-    // ① ステータスを「91.申請者取り下げ」に更新（actionItemId がある場合のみ）
+    // ① 取消理由を事務局アクションリストへ記録（ステータスは変更しない）
     if (state.actionItemId) {
-      await fetch(`/api/action-item/${state.actionItemId}/status`, {
+      await fetch(`/api/action-item/${state.actionItemId}/cancel`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ status: '91.申請者取り下げ' }),
+        body:    JSON.stringify({ reason: cancelReason }),
       });
-      // 改修: 1案件=1予約ガード用に現在ステータスを追従
-      state.actionStatus = '91.申請者取り下げ';
     }
-    // ② PMOへ利用取消依頼通知メール送信
+    // ② PMOへ利用取消依頼通知メール送信（本文に取消理由を必ず記載）
     await sendMail(
       mailConfig.pmoTo,
-      buildMailSubject('利用取消依頼の通知', cancelMachine),
+      buildMailSubject('利用取消依頼の通知', cancelMachine, resolveMailAddress(cancelMachine)),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より利用取消の依頼がありました。\n\n` +
       `■対象予約\n` +
       ` 予約ID  : ${state.actionTitleId}\n` +
       ` 筐体名  : ${cancelMachine}\n` +
       (cancelRes ? ` 現在の貸出期間: ${cancelRes.start} 〜 ${cancelRes.end}\n` : '') +
+      `\n■取消理由\n` +
+      ` ${cancelReason}\n` +
       mailSignature(),
       mailConfig.pmoCc
     );
     setStatus('利用取消依頼を送信しました。PMOへ通知しました。');
+    closeFormPane();
   } catch (e) {
     console.error('利用取消依頼エラー:', e);
     setStatus('利用取消依頼の送信に失敗しました', 'red');
   } finally {
     hideBusy();  // 改修: 処理中オーバーレイ解除
   }
+});
+
+// 改修: 利用取消依頼「キャンセル」ボタン
+document.getElementById('cancel-cancel').addEventListener('click', () => {
+  closeFormPane();
 });
 
 // 改修(第15回): 利用終了報告ボタンのクリックハンドラ（使用者モード）W-17
@@ -1965,7 +2152,7 @@ document.getElementById('info-report-btn').addEventListener('click', async () =>
     // 改修(メール文面): 提案資料⑦に合わせて件名・本文を更新
     await sendMail(
       mailConfig.pmoTo,
-      buildMailSubject('利用終了報告', reportRes?.machine || ''),
+      buildMailSubject('利用終了報告', reportRes?.machine || '', resolveMailAddress(reportRes?.machine)),
       `PMO ご担当者 様\n\n` +
       `下記予約について、使用者より利用終了の報告がありました。\n` +
       `HILSの初期状態復帰の確認をお願いします。\n\n` +
@@ -1987,10 +2174,11 @@ document.getElementById('info-report-btn').addEventListener('click', async () =>
 });
 
 
-// 改修: マニュアルボタンのクリックハンドラ
-// PDF配置後は window.open('manual.pdf', '_blank') に切替。未配置期間はステータス欄に通知
+// 改修: マニュアルボタン — ユーザー用/事務局用でリンクを分岐して新規タブで開く
+const MANUAL_URL_USER  = 'https://globalhonda.sharepoint.com/:b:/r/sites/jphgt110776/Shared%20Documents/01_%E4%BA%88%E7%B4%84%E7%AE%A1%E7%90%86%E8%A1%A8/%E3%83%9E%E3%83%8B%E3%83%A5%E3%82%A2%E3%83%AB/%E7%B5%B1%E5%90%88HILS%E4%BA%88%E7%B4%84%E3%82%B5%E3%82%A4%E3%83%88_%E3%83%A6%E3%83%BC%E3%82%B6%E3%83%BC%E7%94%A8%E6%93%8D%E4%BD%9C%E3%83%9E%E3%83%8B%E3%83%A5%E3%82%A2%E3%83%AB.pdf?csf=1&web=1&e=j0h58j';
+const MANUAL_URL_ADMIN = 'https://globalhonda.sharepoint.com/:b:/r/sites/jphgt110776/Shared%20Documents/01_%E4%BA%88%E7%B4%84%E7%AE%A1%E7%90%86%E8%A1%A8/%E3%83%9E%E3%83%8B%E3%83%A5%E3%82%A2%E3%83%AB/%E7%B5%B1%E5%90%88HILS%E4%BA%88%E7%B4%84%E3%82%B5%E3%82%A4%E3%83%88_%E4%BA%8B%E5%8B%99%E5%B1%80%E7%94%A8%E6%93%8D%E4%BD%9C%E3%83%9E%E3%83%8B%E3%83%A5%E3%82%A2%E3%83%AB.pdf?csf=1&web=1&e=0QUq9l';
 document.getElementById('manual-btn').addEventListener('click', () => {
-  setStatus('マニュアルは準備中です');
+  window.open(isAdmin ? MANUAL_URL_ADMIN : MANUAL_URL_USER, '_blank');
 });
 
 // 改修(不具合修正): 事務局アクションリストの「承知/辞退/期間変更」列を更新する共通ヘルパー。
@@ -2027,7 +2215,7 @@ document.getElementById('accept-change-btn').addEventListener('click', async () 
     await sendMail(
       mailConfig.pmoTo,
       // 改修: 件名を「予約内容変更」から「日程変更」に変更（実質は使用期間の変更依頼のため）
-      buildMailSubject('日程変更のご依頼', chgMachine),
+      buildMailSubject('日程変更のご依頼', chgMachine, resolveMailAddress(chgMachine)),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より使用期間の変更依頼がありました。\n\n` +
       `■対象予約\n` +
@@ -2066,7 +2254,7 @@ document.getElementById('accept-ok-btn').addEventListener('click', async () => {
     const okMachine = state.actionHilsRes?.machine || '';
     await sendMail(
       mailConfig.pmoTo,
-      buildMailSubject('使用承知の通知', okMachine),
+      buildMailSubject('使用承知の通知', okMachine, resolveMailAddress(okMachine)),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より使用を「承知」する旨の回答がありました。\n\n` +
       `■対象予約\n` +
@@ -2123,7 +2311,7 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
     const rejMachine = state.actionHilsRes?.machine || '';
     await sendMail(
       mailConfig.pmoTo,
-      buildMailSubject('使用辞退の通知', rejMachine),
+      buildMailSubject('使用辞退の通知', rejMachine, resolveMailAddress(rejMachine)),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より使用を「辞退」する旨の回答がありました。\n` +
       `本予約は予約管理表から削除されます。\n\n` +
@@ -2174,12 +2362,32 @@ function deleteReservation(resId) {
   // ただしステータスが 90/91（否認・取り下げ）の場合は管理状態を維持しステータス変更しない
   if (state.actionItemId && spId != null && spId === state.actionResSpId) {
     if (!KEEP_STATUS_NUMS.includes(actionStatusNum(state.actionStatus))) {
-      fetch(`/api/action-item/${state.actionItemId}/status`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ status: '0.仮申請受領前' }),
-      }).catch(e => console.error('削除後ステータス初期化エラー:', e));
-      state.actionStatus = '0.仮申請受領前';
+      // 改修: ステータス遷移タイミングを「利用取消依頼申請時」から「事務局が予約を削除した時」へ変更。
+      // 取消理由（事務局アクションリストの取消理由列）の有無で、取消依頼由来の削除か通常削除かを判定する。
+      // 取消理由あり→91.申請者取り下げ、なし→従来通り0.仮申請受領前
+      const actionId = state.actionItemId;
+      (async () => {
+        let nextStatus = '0.仮申請受領前';
+        try {
+          const actionRes = await fetch(`/api/action-item/${actionId}`);
+          if (actionRes.ok) {
+            const actionData = await actionRes.json();
+            if (actionData.cancelReason) nextStatus = '91.申請者取り下げ';
+          }
+        } catch (e) {
+          console.error('取消理由の確認に失敗しました:', e);
+        }
+        try {
+          await fetch(`/api/action-item/${actionId}/status`, {
+            method:  'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ status: nextStatus }),
+          });
+          state.actionStatus = nextStatus;
+        } catch (e) {
+          console.error('削除後ステータス更新エラー:', e);
+        }
+      })();
     }
     state.actionResSpId = null;
   }
@@ -2299,6 +2507,7 @@ function buildLegendSelect(selectedId) {
 function closeFormPane() {
   document.getElementById('form-pane').classList.add('hidden');
   document.getElementById('extend-pane').classList.add('hidden');
+  document.getElementById('cancel-pane').classList.add('hidden');  // 改修: 利用取消依頼ペインも排他非表示
   document.getElementById('form-empty').classList.remove('hidden');
   // 改修: フォームモードをリセット（日付自動連動の対象外にする）
   state.formMode = null;
@@ -2533,8 +2742,9 @@ function showDialog(title, data, mode, resId = null) {
     }
   });
 
-  // 改修: form-paneを表示し、extend-pane・プレースホルダを排他非表示
+  // 改修: form-paneを表示し、extend-pane・cancel-pane・プレースホルダを排他非表示
   document.getElementById('extend-pane').classList.add('hidden');
+  document.getElementById('cancel-pane').classList.add('hidden');
   document.getElementById('form-empty').classList.add('hidden');
   overlay.classList.remove('hidden');
   // 改修: 日付自動連動のためフォームモードを記録（登録時のみ連動）
@@ -2579,6 +2789,8 @@ function showDialog(title, data, mode, resId = null) {
       user:      document.getElementById('f-user').value.trim(),      // 改修(SP連携マージ): 借用者
       applicant: document.getElementById('f-applicant').value.trim(),
       email:     state.autoFill ? state.autoFill.email : '',         // 改修: 申請者メールアドレス（使用者アドレス列へ転記）
+      // 改修: アドレス（筐体ごとの手入力識別情報。メールアドレスとは別物）。南HILSルームのみ保存対象
+      address:   (state.currentRoom === 'south') ? (state.addresses[document.getElementById('f-machine').value] || '') : '',
       remark:    document.getElementById('f-remark').value.trim(),
       status,
       marks,     // 改修(第8回): 検証完了日★配列
@@ -2686,7 +2898,7 @@ function showDialog(title, data, mode, resId = null) {
           try {
             await sendMail(
               applicantEmail,
-              buildMailSubject('使用確定のお知らせ（承知・辞退のお願い）', resData.machine),
+              buildMailSubject('使用確定のお知らせ（承知・辞退のお願い）', resData.machine, resData.address),
               `${state.autoFill?.applicant || ''} 様\n\n` +
               `ご申請いただいた統合HILSの使用日程が確定しましたのでお知らせします。\n\n` +
               `■予約情報\n` +
@@ -2814,7 +3026,7 @@ function showDialog(title, data, mode, resId = null) {
       }
       await sendMail(
         applicantEmail,
-        buildMailSubject('HILS初期状態復帰のご確認', terminateRes?.machine || ''),
+        buildMailSubject('HILS初期状態復帰のご確認', terminateRes?.machine || '', terminateRes?.address || resolveMailAddress(terminateRes?.machine)),
         `${state.autoFill?.applicant || ''} 様\n\n` +
         `下記予約の利用終了処理が完了しました。\n` +
         `HILSが初期状態へ復帰していることをご確認ください。\n\n` +
@@ -3085,6 +3297,9 @@ async function init() {
     syncRoomViews();
     saveReservations(state.reservations);
   }
+
+  // 改修: アドレス列は南HILSルームのみ表示。初回renderCalendar前にクラスを確定させる
+  applyAddressVisibility(state.currentRoom);
 
   // 改修(第7回): 表示期間を初期化してからカレンダーを描画し、今日へ自動スクロール
   initViewRange();

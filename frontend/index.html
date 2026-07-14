@@ -102,6 +102,22 @@
               </div>
             </div>
           </div>
+          <!-- 改修: 利用取消依頼フォーム（期間変更申請と同様に取消理由を残す） -->
+          <div id="cancel-pane" class="form-pane hidden">
+            <div class="form-pane-header"><span>利用取消依頼</span></div>
+            <div class="form-pane-body">
+              <div class="form-row">
+                <label>取消理由:</label>
+                <textarea id="cancel-reason" rows="3" placeholder="必須入力"></textarea>
+              </div>
+            </div>
+            <div class="form-pane-footer">
+              <div class="dialog-footer-right">
+                <button id="cancel-cancel" class="btn btn-cancel">キャンセル</button>
+                <button id="cancel-ok" class="btn btn-ok">依頼</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <div id="info-panel" class="info-panel">
@@ -172,6 +188,11 @@
         <!-- 承知ブロック -->
         <div class="accept-card">
           <h3 class="accept-card-title">承知する</h3>
+          <!-- 改修: 利用終了時の対応事項（終了メール返信・初期状態復帰確認）を承知前に周知 -->
+          <p class="accept-note accept-warning">
+            利用終了時には、使用者が終了メールに返信してください。<br>
+            ※HILSの初期状態復帰が確認できない場合、処理依頼、または次回以降の貸出しを禁止することがあります。
+          </p>
           <div class="form-row">
             <label>理由（任意）:</label>
             <textarea id="accept-ok-reason" rows="2" placeholder="任意入力"></textarea>
