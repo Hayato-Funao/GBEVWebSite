@@ -1008,3 +1008,39 @@ body {
   justify-content: flex-end;
   margin-top: 10px;
 }
+
+/* 改修: 処理中オーバーレイ（メール送信・ステータス変更の実行中に操作をブロックする） */
+/* .hidden は display:none !important のため、表示時は :not(.hidden) 側で display:flex を明記して上書きする */
+.busy-overlay.hidden { display: none; }
+.busy-overlay:not(.hidden) {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.busy-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  background: #fff;
+  padding: 24px 32px;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+.busy-spinner {
+  width: 36px;
+  height: 36px;
+  border: 4px solid #dbeafe;
+  border-top-color: #1d4ed8;
+  border-radius: 50%;
+  animation: busy-spin 0.8s linear infinite;
+}
+.busy-text {
+  font: 600 13px 'Meiryo UI', sans-serif;
+  color: #1e3a5f;
+}
+@keyframes busy-spin { to { transform: rotate(360deg); } }

@@ -201,6 +201,14 @@
 
 <!-- 改修: 登録・編集・閲覧・期間変更申請は右サイドパネル(#form-pane/#extend-pane)へ移設。旧overlay削除 -->
 
+<!-- 改修: 処理中オーバーレイ（メール送信・ステータス変更中は操作をブロックして表示） -->
+<div id="busy-overlay" class="busy-overlay hidden">
+  <div class="busy-box">
+    <div class="busy-spinner"></div>
+    <div class="busy-text">処理中...</div>
+  </div>
+</div>
+
 <!-- 改修: html2canvasをローカル同梱（オフライン・社内網でも動作するよう） -->
 <script src="html2canvas.min.js"></script>
 <script src="app.js"></script>

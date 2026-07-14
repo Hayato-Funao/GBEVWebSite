@@ -111,8 +111,9 @@ def main():
 		# 改修(メール文面): 申請者名（取得不可時は省略）
 		# 候補列: 申請者名系の内部名（実機確認後に正式名へ変更すること）
 		applicant_name = item.get('field_2', '') or item.get('OData__x7533__x8acb__x8005__x540d__x', '')
-		# 改修(メール文面): 予約ID（Title列。使用履歴リストのTitle≠仮IDの場合あり、取得可能な場合のみ記載）
-		reservation_id = item.get('Title', '')
+		# 改修: 予約ID＝事務局アクションリストID列（登録時に起動URLのid値=SP内部IDを転記）。旧データはTitleへフォールバック
+		action_list_id = item.get('OData__x4e8b__x52d9__x5c40__x30a2__x30', '')
+		reservation_id = str(action_list_id) if action_list_id not in (None, '') else item.get('Title', '')
 
 		end_str = end_date.isoformat()
 		app_url = os.environ.get('APP_URL', 'http://RC25020358:3000/')
@@ -140,7 +141,9 @@ def main():
 			body_lines.append(f' 終了予定日: {end_str}\n')
 			body_lines.append('・期間の延長が必要な場合は、下記ページより期間変更を申請してください。')
 			body_lines.append('・使用を終了される場合は、HILSを初期状態へ復帰のうえ、下記ページより利用終了報告をお願いします。\n')
-			body_lines.append(f' 期間変更・利用終了報告: {app_url}')
+			# 改修: ユーザー用サイトURLに予約ID（事務局アクションリストID列）を付与し、開くと該当予約が自動入力されるようにする
+			alert_url = f'{app_url}?id={reservation_id}' if reservation_id else app_url
+			body_lines.append(f' 期間変更・利用終了報告: {alert_url}')
 			mail_body = '\n'.join(body_lines) + signature
 			run_sp_command('send_mail', to_address, subject, mail_body)
 			print(f'アラートメール送信完了: {machine} ({start_date.isoformat()}〜{end_str}) → {to_address}')

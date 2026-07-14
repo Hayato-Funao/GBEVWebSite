@@ -418,6 +418,26 @@ function setStatus(text, color = 'orange') {
 }
 
 // ────────────────────────────────────────────
+// 改修: 処理中オーバーレイ制御
+// メール送信・ステータス変更などの実行中は全画面オーバーレイ＋スピナーで操作をブロックする。
+// 参照カウント方式にしているのは、登録処理でステータス更新とメール送信を並行実行する箇所があり、
+// 片方の完了で先にオーバーレイを閉じてしまわないようにするため。
+// ────────────────────────────────────────────
+let busyCount = 0;
+function showBusy(text = '処理中...') {
+  busyCount++;
+  const overlay = document.getElementById('busy-overlay');
+  overlay.querySelector('.busy-text').textContent = text;
+  overlay.classList.remove('hidden');
+}
+function hideBusy() {
+  busyCount = Math.max(0, busyCount - 1);
+  if (busyCount === 0) {
+    document.getElementById('busy-overlay').classList.add('hidden');
+  }
+}
+
+// ────────────────────────────────────────────
 // バックエンド API
 // ────────────────────────────────────────────
 // 改修(SP連携マージ): エラー時は null を返して init() でlocalStorageフォールバック判定に使用
@@ -551,6 +571,8 @@ function buildSpPayload(resData) {
     user:      resData.user      || '',  // 借用者（f-user）
     applicant: resData.applicant || '',  // 申請者（f-applicant）
     email:     resData.email     || '',  // 改修: 使用者アドレス列へ申請者メールアドレスを転記
+    // 改修: 事務局アクションリストID列へ、起動URLのid値（SP内部ID）を数値で転記。未起動・非数値時は送らない
+    actionListId: (state.actionTitleId && /^\d+$/.test(state.actionTitleId)) ? Number(state.actionTitleId) : undefined,
   };
 }
 
@@ -1829,6 +1851,7 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
   }
   // 改修(第14回): 希望終了日・申請理由をSPにPATCH＋ステータスを9.期間変更申請中に更新＋PMO通知 W-10
   const extId = state.actionItemId;  // 第12回で保持したSP内部ID
+  showBusy('期間変更申請を送信中...');  // 改修: 処理中オーバーレイ表示
   try {
     if (extId) {
       // ① アクションリストへ期間変更申請データをPATCH
@@ -1866,6 +1889,8 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
   } catch (e) {
     console.error('期間変更申請エラー:', e);
     setStatus('期間変更申請の送信に失敗しました', 'red');
+  } finally {
+    hideBusy();  // 改修: 処理中オーバーレイ解除
   }
 });
 document.getElementById('ext-cancel').addEventListener('click', () => {
@@ -1880,6 +1905,7 @@ document.getElementById('info-cancel-btn').addEventListener('click', async () =>
   if (!confirm('この予約の利用取消を依頼しますか？')) return;
   const cancelRes     = state.selectedResId != null ? state.reservations[state.selectedResId] : null;
   const cancelMachine = cancelRes?.machine || '';
+  showBusy('利用取消依頼を送信中...');  // 改修: 処理中オーバーレイ表示
   try {
     // ① ステータスを「91.申請者取り下げ」に更新（actionItemId がある場合のみ）
     if (state.actionItemId) {
@@ -1907,6 +1933,8 @@ document.getElementById('info-cancel-btn').addEventListener('click', async () =>
   } catch (e) {
     console.error('利用取消依頼エラー:', e);
     setStatus('利用取消依頼の送信に失敗しました', 'red');
+  } finally {
+    hideBusy();  // 改修: 処理中オーバーレイ解除
   }
 });
 
@@ -1916,6 +1944,7 @@ document.getElementById('info-report-btn').addEventListener('click', async () =>
   if (!confirm('この予約の利用終了を報告しますか？')) return;
   // 選択中の予約（state.selectedResId はインデックス）
   const reportRes = state.selectedResId != null ? state.reservations[state.selectedResId] : null;
+  showBusy('利用終了報告を送信中...');  // 改修: 処理中オーバーレイ表示
   try {
     // 改修(メール文面): 提案資料⑦に合わせて件名・本文を更新
     await sendMail(
@@ -1935,6 +1964,8 @@ document.getElementById('info-report-btn').addEventListener('click', async () =>
   } catch (e) {
     console.error('利用終了報告エラー:', e);
     setStatus('利用終了報告の送信に失敗しました', 'red');
+  } finally {
+    hideBusy();  // 改修: 処理中オーバーレイ解除
   }
 });
 
@@ -1969,6 +2000,7 @@ document.getElementById('accept-change-btn').addEventListener('click', async () 
   // 改修(メール文面): 希望期間入力（#accept-new-start/#accept-new-end）を取得
   const newStart = document.getElementById('accept-new-start').value;
   const newEnd   = document.getElementById('accept-new-end').value;
+  showBusy('変更依頼を送信中...');  // 改修: 処理中オーバーレイ表示
   try {
     // 改修(不具合修正): ①アクションリストの承知/辞退/期間変更列を「期間変更」に更新
     // （ステータス列・希望終了日・理由のSP書き込みは既存の別画面「期間変更申請」機能の範疇のため今回は行わない）
@@ -1997,6 +2029,8 @@ document.getElementById('accept-change-btn').addEventListener('click', async () 
   } catch (e) {
     console.error('変更依頼メール送信エラー:', e);
     setStatus('変更依頼の送信に失敗しました', 'red');
+  } finally {
+    hideBusy();  // 改修: 処理中オーバーレイ解除
   }
 });
 
@@ -2005,6 +2039,7 @@ document.getElementById('accept-change-btn').addEventListener('click', async () 
 document.getElementById('accept-ok-btn').addEventListener('click', async () => {
   // URLのidはTitle値のため、SP内部IDを保持したstate.actionItemIdを使用する
   const acceptId = state.actionItemId;  // 第12回で保持したSP内部ID
+  showBusy('承知処理を送信中...');  // 改修: 処理中オーバーレイ表示
   try {
     // ① アクションリストの承知/辞退/期間変更列を「承知」に更新
     await patchActionAccept(acceptId, '承知');
@@ -2027,6 +2062,8 @@ document.getElementById('accept-ok-btn').addEventListener('click', async () => {
   } catch (e) {
     console.error('承知処理エラー:', e);
     setStatus('承知処理に失敗しました', 'red');
+  } finally {
+    hideBusy();  // 改修: 処理中オーバーレイ解除
   }
 });
 
@@ -2039,6 +2076,7 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
   }
   // URLのidはTitle値のため、SP内部IDを保持したstate.actionItemIdを使用する
   const rejectId = state.actionItemId;  // 第12回で保持したSP内部ID
+  showBusy('辞退処理を送信中...');  // 改修: 処理中オーバーレイ表示
   try {
     if (rejectId) {
       // ① アクションリストのステータスを「91.申請者取り下げ」に更新（既存ルート活用）
@@ -2083,6 +2121,8 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
   } catch (e) {
     console.error('辞退処理エラー:', e);
     setStatus('辞退処理に失敗しました', 'red');
+  } finally {
+    hideBusy();  // 改修: 処理中オーバーレイ解除
   }
 });
 
@@ -2553,20 +2593,27 @@ function showDialog(title, data, mode, resId = null) {
         await apiAppendStatus(resData);
         return;
       }
-      // 改修(SP連携マージ): SPに登録し、返却IdをspIdとして保存（楽観更新）
-      const newSpId = await apiCreate(resData);
-      if (newSpId != null) {
-        state.reservations[state.selectedResId].spId = newSpId;
-        saveReservations(state.reservations);
-        // 改修: 1案件=1予約ガード用に、このアクションIDに紐づく予約行のspIdを記録
-        if (state.actionItemId) state.actionResSpId = newSpId;
+      // 改修: 処理中オーバーレイ表示（SP登録〜凡例色リスト追記の間）
+      showBusy('登録処理中...');
+      try {
+        // 改修(SP連携マージ): SPに登録し、返却IdをspIdとして保存（楽観更新）
+        const newSpId = await apiCreate(resData);
+        if (newSpId != null) {
+          state.reservations[state.selectedResId].spId = newSpId;
+          saveReservations(state.reservations);
+          // 改修: 1案件=1予約ガード用に、このアクションIDに紐づく予約行のspIdを記録
+          if (state.actionItemId) state.actionResSpId = newSpId;
+        }
+        // 改修(起動連携): 凡例色リストCSVに追記（色・状態等リッチ項目を永続化）
+        await apiAppendLegendColor(resData);
+      } finally {
+        hideBusy();  // 改修: 処理中オーバーレイ解除
       }
-      // 改修(起動連携): 凡例色リストCSVに追記（色・状態等リッチ項目を永続化）
-      await apiAppendLegendColor(resData);
       // 改修(第13回): 登録成功後に事務局アクションリストのステータス・状態を更新 W-5/W-7
       // state.actionItemIdはURLの?id=パラメータで起動した場合のみ設定される
       if (state.actionItemId) {
         (async () => {
+          showBusy('登録処理中...');  // 改修: 処理中オーバーレイ表示
           try {
             // ① ステータスを「1.仮申請受領」に更新
             const r1 = await fetch(`/api/action-item/${state.actionItemId}/status`, {
@@ -2600,15 +2647,24 @@ function showDialog(title, data, mode, resId = null) {
           } catch (e) {
             console.error('登録後アクションリスト更新エラー:', e);
             setStatus('予約は登録されましたがアクションリスト更新に失敗しました', '#ef4444');
+          } finally {
+            hideBusy();  // 改修: 処理中オーバーレイ解除
           }
         })();
       }
       // 改修(メール文面): ①使用確定通知メールを申請者へ送信（?id=起動時のみ）
       if (state.actionItemId && state.actionTitleId) {
         (async () => {
+          // 改修: 宛先を申請者メールアドレス（事務局アクションリストの申請者メールアドレス列）へ変更
+          const applicantEmail = state.autoFill?.email;
+          if (!applicantEmail) {
+            setStatus('申請者メールアドレスが見つかりませんでした', 'red');
+            return;
+          }
+          showBusy('登録処理中...');  // 改修: 処理中オーバーレイ表示
           try {
             await sendMail(
-              MAIL_PMO_ADDRESS,  // 動作確認用固定。確認後は申請者アドレスへ変更すること
+              applicantEmail,
               buildMailSubject('使用確定のお知らせ（承知・辞退のお願い）', resData.machine),
               `${state.autoFill?.applicant || ''} 様\n\n` +
               `ご申請いただいた統合HILSの使用日程が確定しましたのでお知らせします。\n\n` +
@@ -2623,6 +2679,8 @@ function showDialog(title, data, mode, resId = null) {
             );
           } catch (e) {
             console.error('使用確定通知メール送信エラー:', e);
+          } finally {
+            hideBusy();  // 改修: 処理中オーバーレイ解除
           }
         })();
       }
@@ -2707,6 +2765,7 @@ function showDialog(title, data, mode, resId = null) {
     if (!confirm('この予約を利用終了にしますか？')) return;
     // 対象予約（resId は showDialog 第4引数）
     const terminateRes = resId != null ? state.reservations[resId] : null;
+    showBusy('利用終了処理中...');  // 改修: 処理中オーバーレイ表示
     try {
       // ① アクションリストのステータスを「10.利用終了」に更新（既存ルート再利用）
       if (state.actionItemId) {
@@ -2725,9 +2784,14 @@ function showDialog(title, data, mode, resId = null) {
         state.actionStatus = '10.利用終了';
       }
       // ② 申請者へHILS復帰確認メールを送信（改修(メール文面): 提案資料⑧に合わせて件名・本文を更新）
-      // 動作確認用: 宛先を固定。確認後は申請者アドレスへ変更すること
+      // 改修: 宛先を申請者メールアドレス（事務局アクションリストの申請者メールアドレス列）へ変更
+      const applicantEmail = state.autoFill?.email;
+      if (!applicantEmail) {
+        setStatus('申請者メールアドレスが見つかりませんでした', 'red');
+        return;
+      }
       await sendMail(
-        MAIL_PMO_ADDRESS,
+        applicantEmail,
         buildMailSubject('HILS初期状態復帰のご確認', terminateRes?.machine || ''),
         `${state.autoFill?.applicant || ''} 様\n\n` +
         `下記予約の利用終了処理が完了しました。\n` +
@@ -2749,6 +2813,8 @@ function showDialog(title, data, mode, resId = null) {
     } catch (e) {
       console.error('利用終了処理エラー:', e);
       setStatus('利用終了処理に失敗しました', 'red');
+    } finally {
+      hideBusy();  // 改修: 処理中オーバーレイ解除
     }
   };
 }

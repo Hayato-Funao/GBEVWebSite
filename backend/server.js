@@ -712,6 +712,8 @@ function toSpFields(data) {
   if (data.applicant !== undefined) f['OData__x7533__x8acb__x8005__x540d_']     = data.applicant;
   // 改修: 使用者アドレス列（申請者メールアドレス）へ書き込み。空の場合はスキップ（編集時の意図しないブランク上書き防止）
   if (data.email) f['OData__x7533__x8acb__x8005__x30a2__x30'] = data.email;
+  // 改修: 事務局アクションリストID列（内部名 _x4e8b__x52d9__x5c40__x30a2__x30）へSP内部IDを数値で書き込み。未設定はスキップ
+  if (data.actionListId != null) f['OData__x4e8b__x52d9__x5c40__x30a2__x30'] = data.actionListId;
   // color は使用履歴リストに列がないため書き込みスキップ
   return f;
 }
