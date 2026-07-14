@@ -706,18 +706,19 @@ def main():
                 print(json.dumps({'ok': True}))
 
         # 改修(第14回): 事務局アクションリストの承知/辞退列を更新（W-9）
-        # accept_status: '承知' or '辞退'。承知時はステータス変更しない（1.仮申請受領を維持）
-        # ⚠ 実内部名は get_fields action で確認後に置換すること（32文字切詰に注意）
+        # accept_status: '承知' / '辞退' / '期間変更'。承知時はステータス変更しない（1.仮申請受領を維持）
+        # 改修(不具合修正): 内部名を get_fields action で実機照合済み（32文字切詰後の正しい値に修正）。
+        # 旧値は切詰前の35字名で存在しない列を指しており、SP側でInvalidClientQueryExceptionの原因だった
         elif cmd == 'update_action_accept':
             item_id       = sys.argv[2]
-            accept_status = sys.argv[3]  # '承知' or '辞退'
+            accept_status = sys.argv[3]  # '承知' / '辞退' / '期間変更'
             action_site   = os.environ.get('SP_ACTION_SITE', SITE_URL).rstrip('/')
             action_guid   = os.environ.get('SP_ACTION_GUID', '')
             if not action_guid:
                 print(json.dumps({'error': 'SP_ACTION_GUID が未設定'}, ensure_ascii=False))
             else:
-                # 承知/辞退列（要get_fields照合: 内部名は実機確認要）
-                fields = {'OData__x627f__x77e5__x002f__x8f9e__x9000_': accept_status}
+                # 承知/辞退/期間変更列（get_fields照合済の内部名）
+                fields = {'OData__x627f__x77e5__x002f__x8f9e__x90': accept_status}
                 _update_item(sess, action_site, action_guid, item_id, fields)
                 print(json.dumps({'ok': True}))
 

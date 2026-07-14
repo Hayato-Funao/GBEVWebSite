@@ -240,6 +240,22 @@ body {
    #gantt-table に .assignee-hidden を付与することで全行の担当者列を一括で非表示にする */
 .gantt-table.assignee-hidden th.assignee-col,
 .gantt-table.assignee-hidden td.assignee-col { display: none; }
+
+/* 改修(可視範囲スクショ・不具合修正): 撮影中のみsticky解除。
+   html2canvasはstickyを「貼り付いた画面位置」で描画するため、スクロールした状態で撮影すると
+   固定列/固定ヘッダがキャンバス内の想定位置（x=0/y=0起点）からズレて可視範囲クロップに乗らず、
+   撮影結果から欠落してしまう。キャプチャ直前だけpositionをstaticに戻し、
+   テーブル本来の静的位置（スクロール前と同じ座標）で描画させることでこれを解消する。
+   対象はsticky指定のある4セレクタのみに限定する（他の予約セルの位置基準に影響させないため） */
+.gantt-table.capturing th.machine-col,
+.gantt-table.capturing td.machine-col,
+.gantt-table.capturing th.assignee-col,
+.gantt-table.capturing td.assignee-col,
+.gantt-table.capturing th.month-col,
+.gantt-table.capturing th.date-col {
+  position: static !important;
+}
+
 /* 改修: 担当者列トグルのラベルスタイル */
 .assignee-toggle {
   display: inline-flex;

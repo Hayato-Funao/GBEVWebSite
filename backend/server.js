@@ -26,6 +26,12 @@ const CSV_MAX_ROWS = parseInt(process.env.LEGEND_CSV_MAX || '500', 10);
 // 通常予約は凡例色リストCSV、非通常（予備日/設備故障/休日）は本CSVに分離して記録する
 const STATUS_CSV_PATH = process.env.STATUS_CSV_PATH || path.join(__dirname, '../状態リスト.csv');
 
+// 改修(筐体マスタ共通化): 筐体マスタCSV（ルーム別）を格納するディレクトリ
+// 本番ではサーバーPC上の絶対パスを MACHINE_CSV_DIR に指定すること
+const MACHINE_CSV_DIR   = process.env.MACHINE_CSV_DIR || path.join(__dirname, '../筐体マスタ');
+// ルーム名 → CSVファイル名の対応表（許可ルームをここで固定し、パストラバーサルを防止）
+const MACHINE_CSV_FILES = { west: '筐体一覧_west.csv', south: '筐体一覧_south.csv' };
+
 const PORT        = parseInt(process.env.PORT || '3000');
 const IS_DUMMY    = !process.env.SITE_URL;   // 改修(SP連携マージ): Python方式ではSITE_URLで接続有無を判定
 // 改修(第16回): 本番は dist/ から配信。dist/ が存在しなければ開発用の frontend/ にフォールバック
@@ -346,6 +352,48 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 改修(筐体マスタ共通化): GET /api/machines?room=west|south — 筐体マスタCSVを返す
+  if (pathname === '/api/machines' && method === 'GET') {
+    const room = urlObj.searchParams.get('room') || '';
+    if (!MACHINE_CSV_FILES[room]) {
+      jsonErr(res, 400, `不正なroom指定: ${room}`);
+      return;
+    }
+    try {
+      let data = parseMachineCsv(room);
+      if (data === null) {
+        // 未初期化時: westは既定シードで新規作成、southは空で返す（南ルームはSP予約から動的生成されるため）
+        data = room === 'west'
+          ? { machines: DEFAULT_MACHINES.slice(), spares: DEFAULT_SPARES.slice(), assignees: {} }
+          : { machines: [], spares: [], assignees: {} };
+        writeMachineCsv(room, data);
+      }
+      jsonOk(res, data);
+    } catch (e) {
+      console.error('GET /api/machines:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(筐体マスタ共通化): POST /api/machines?room=west|south — 筐体マスタCSVをルーム単位で全置換保存
+  if (pathname === '/api/machines' && method === 'POST') {
+    const room = urlObj.searchParams.get('room') || '';
+    if (!MACHINE_CSV_FILES[room]) {
+      jsonErr(res, 400, `不正なroom指定: ${room}`);
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      writeMachineCsv(room, body);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('POST /api/machines:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
   // ── 静的ファイル配信 ──
   serveStatic(req, res, pathname);
 });
@@ -518,9 +566,90 @@ function deleteLegendCsv(machine, start, end, csvPath = CSV_PATH) {
   }
 }
 
+// ────────────────────────────────────────────
+// 改修(筐体マスタ共通化): 筐体マスタCSV ヘルパー（ルーム別、west/southで別ファイル）
+// CSVスキーマ（4列）: 種別(machine|spare), 筐体名, 担当者, 表示順
+// 表示順は保存時に0始まりで振り直し、グリッドの行順（機種→予備の並び）を保持する
+// ────────────────────────────────────────────
+
+// メイン筐体の既定シード（筐体A〜筐体T）。西ルーム初回起動時にのみ使用
+const DEFAULT_MACHINES = [...'ABCDEFGHIJKLMNOPQRST'.split('').map(c => '筐体' + c)];
+// 予備の既定シード
+const DEFAULT_SPARES = ['予備1', '予備2'];
+
+// ルーム名からCSVパスを生成する（未対応のルームはnullを返す）
+function machineCsvPath(room) {
+  const file = MACHINE_CSV_FILES[room];
+  if (!file) return null;
+  return path.join(MACHINE_CSV_DIR, file);
+}
+
+// 筐体マスタCSVを読み込み { machines, spares, assignees } を返す
+// ファイルが存在しない場合はnullを返す（呼び出し側で初期シード投入の判断に使う）
+function parseMachineCsv(room) {
+  const csvPath = machineCsvPath(room);
+  if (!csvPath) return null;
+  let raw;
+  try {
+    raw = fs.readFileSync(csvPath, 'utf8');
+  } catch (_) {
+    return null;
+  }
+  // UTF-8 BOM（U+FEFF）を除去してから分割
+  const lines = raw.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim() !== '');
+  if (lines.length < 1) return { machines: [], spares: [], assignees: {} };
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const vals = splitCsvLine(lines[i]);
+    rows.push({
+      type:     unquote(vals[0] || ''),
+      name:     unquote(vals[1] || ''),
+      assignee: unquote(vals[2] || ''),
+      order:    parseInt(unquote(vals[3] || '0'), 10) || 0,
+    });
+  }
+  // 表示順（保存時に振った連番）で昇順ソートしてから種別ごとに振り分ける
+  rows.sort((a, b) => a.order - b.order);
+  const machines  = [];
+  const spares    = [];
+  const assignees = {};
+  rows.forEach(r => {
+    if (!r.name) return;
+    if (r.type === 'spare') spares.push(r.name);
+    else machines.push(r.name);
+    if (r.assignee) assignees[r.name] = r.assignee;
+  });
+  return { machines, spares, assignees };
+}
+
+// 筐体マスタ（{machines, spares, assignees}）をCSVへルーム単位で全置換保存する
+function writeMachineCsv(room, data) {
+  const csvPath = machineCsvPath(room);
+  if (!csvPath) return;
+  // 格納フォルダが無ければ作成（初回起動時）
+  fs.mkdirSync(path.dirname(csvPath), { recursive: true });
+  const machines  = Array.isArray(data.machines) ? data.machines : [];
+  const spares    = Array.isArray(data.spares)   ? data.spares   : [];
+  const assignees = (data.assignees && typeof data.assignees === 'object') ? data.assignees : {};
+  const headerLine = ['種別', '筐体名', '担当者', '表示順'].map(quoteVal).join(',');
+  let order = 0;
+  const dataLines = [];
+  // メイン筐体→予備の順で表示順を振り直す（グリッドの行順と一致させる）
+  machines.forEach(name => {
+    dataLines.push(['machine', name, assignees[name] || '', order++].map(quoteVal).join(','));
+  });
+  spares.forEach(name => {
+    dataLines.push(['spare', name, assignees[name] || '', order++].map(quoteVal).join(','));
+  });
+  // UTF-8 BOMを先頭に付与（日本語Windowsのアプリが文字化けしないよう）
+  const bom = '﻿';
+  fs.writeFileSync(csvPath, bom + [headerLine, ...dataLines].join('\r\n') + '\r\n', 'utf8');
+}
+
 // 改修(第13回): SP列名変換を統合HILS使用履歴リストの実内部名に差替え
 // field_1=設備, field_6=設備使用開始日, field_7=設備使用終了日,
-// OData__x7533__x8acb__x8005__x540d_=使用者名（申請者名）, Title=ラベル（案件名）
+// OData__x7533__x8acb__x8005__x540d_=使用者名列（表示名。内部名は歴史的経緯で「申請者名」相当のエンコード）,
+// OData__x501f__x7528__x8005__x540d_=借用者名列, Title=ラベル（案件名）
 // colorはHILS使用履歴リストに列がないため固定値（#fde68a）で返す
 function normalizeSpItem(item) {
   // SharePointのDateTime列はISO形式（例: /Date(1234567890000)/またはYYYY-MM-DDTHH:mm:ssZ）で返る
@@ -564,8 +693,12 @@ function normalizeActionItem(item) {
 
 // 改修(第13回): フロント項目→統合HILS使用履歴リストのSP列名変換
 // field_1=設備, field_6=設備使用開始日(DateTime), field_7=設備使用終了日(DateTime),
-// Title=ラベル（案件名）, OData__x7533__x8acb__x8005__x540d_=使用者名
+// Title=ラベル（案件名）, OData__x7533__x8acb__x8005__x540d_=使用者名, OData__x501f__x7528__x8005__x540d_=借用者名
 // color列は存在しないため書き込まない
+// 改修(不具合修正): 借用者(data.user, 登録フォーム「借用者」欄)と申請者(data.applicant, 登録フォーム「申請者」欄)が
+// 従来どちらも使用者名列に書き込まれており(借用者名列は常に空)、承知/辞退ページの借用者表示が空欄になる不具合があった。
+// get_fields reservation で両列の内部名を実機照合済み（借用者名列は28文字で32文字截断の心配もない）。
+// ユーザー指示: 借用者→借用者名列、申請者→使用者名列 に書き分ける
 function toSpFields(data) {
   const f = {};
   if (data.label   !== undefined) f.Title                                      = data.label;
@@ -573,7 +706,10 @@ function toSpFields(data) {
   // DateTime列: ISO形式（T00:00:00Z）でSharePointに渡す
   if (data.start   !== undefined) f.field_6                                     = data.start ? data.start.split('T')[0] + 'T00:00:00Z' : null;
   if (data.end     !== undefined) f.field_7                                     = data.end   ? data.end.split('T')[0]   + 'T00:00:00Z' : null;
-  if (data.user    !== undefined) f['OData__x7533__x8acb__x8005__x540d_']       = data.user;
+  // 借用者（f-user）は専用の借用者名列へ
+  if (data.user      !== undefined) f['OData__x501f__x7528__x8005__x540d_']     = data.user;
+  // 申請者（f-applicant）は使用者名列（表示名）へ
+  if (data.applicant !== undefined) f['OData__x7533__x8acb__x8005__x540d_']     = data.applicant;
   // 改修: 使用者アドレス列（申請者メールアドレス）へ書き込み。空の場合はスキップ（編集時の意図しないブランク上書き防止）
   if (data.email) f['OData__x7533__x8acb__x8005__x30a2__x30'] = data.email;
   // color は使用履歴リストに列がないため書き込みスキップ

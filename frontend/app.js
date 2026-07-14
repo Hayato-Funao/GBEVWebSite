@@ -90,10 +90,9 @@ const LEGEND_SEED = [
 
 const LEGEND_STORAGE_KEY  = 'hils_legend_v1';
 const RES_STORAGE_KEY     = 'hils_reservations_v1';
-const MACHINE_STORAGE_KEY  = 'hils_machines_v1';     // メイン筐体リストのlocalStorageキー
-const SPARE_STORAGE_KEY    = 'hils_spares_v1';       // 改修: 予備リストのlocalStorageキー
-const ASSIGNEE_STORAGE_KEY  = 'hils_assignees_v1';         // 改修: 担当者マップのlocalStorageキー
-const ASSIGNEE_VISIBLE_KEY  = 'hils_assignee_visible_v1';  // 改修: 担当者列の表示/非表示フラグ（全ルーム共通）
+// 改修(筐体マスタ共通化): 筐体マスタ（machines/spares/assignees）はサーバー側CSVへ移行したため
+// localStorageキー（旧: hils_machines_v1 / hils_spares_v1 / hils_assignees_v1）は廃止
+const ASSIGNEE_VISIBLE_KEY  = 'hils_assignee_visible_v1';  // 改修: 担当者列の表示/非表示フラグ（全ルーム共通・画面表示設定のためlocalStorageのまま）
 
 // ────────────────────────────────────────────
 // 凡例ストア（localStorage）
@@ -134,90 +133,63 @@ function pickUnusedPaletteColor() {
 let _legend = loadLegend();
 
 // ────────────────────────────────────────────
-// 環境名ストア（localStorage）
+// 改修(筐体マスタ共通化): 筐体マスタストア（サーバー側CSV、ルーム別ファイル）
+// 旧実装はlocalStorageに保存していたためPC毎に内容が独立していた。
+// /api/machines?room=west|south 経由でサーバーPC上のCSVへ保存し、全PC共通の情報にする。
 // ────────────────────────────────────────────
-function loadMachines() {
-  // 改修(第4回): ルーム別マップ { west, south } を読み込む
-  // 旧形式（配列）は west ルームへマイグレーション
+
+// 指定ルームの筐体マスタ（machines/spares/assignees）をサーバーから取得する
+// 通信失敗時は従来のフォールバック値（westは既定筐体A〜T＋予備、southは空）を返す
+async function fetchMachineMaster(room) {
   try {
-    const raw = localStorage.getItem(MACHINE_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        // 旧形式：配列は west へマイグレーション（予備行は除外）
-        return { west: parsed.filter(name => !name.startsWith('予備')), south: [] };
-      }
-      // 新形式：{west, south} オブジェクト
-      return {
-        west:  Array.isArray(parsed.west)  ? parsed.west  : HILS_MACHINES.slice(),
-        south: Array.isArray(parsed.south) ? parsed.south : [],
-      };
-    }
-  } catch (_) {}
-  return { west: HILS_MACHINES.slice(), south: [] };
+    const res = await fetch(`/api/machines?room=${room}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return {
+      machines:  Array.isArray(data.machines)  ? data.machines  : [],
+      spares:    Array.isArray(data.spares)    ? data.spares    : [],
+      assignees: (data.assignees && typeof data.assignees === 'object') ? data.assignees : {},
+    };
+  } catch (e) {
+    console.error('筐体マスタCSV取得失敗:', e);
+    return room === 'west'
+      ? { machines: HILS_MACHINES.slice(), spares: HILS_SPARES.slice(), assignees: {} }
+      : { machines: [], spares: [], assignees: {} };
+  }
 }
-function saveMachines() {
-  // 改修(第4回): ルーム別マップ全体を保存する（引数なし・state.machinesByRoom を参照）
-  localStorage.setItem(MACHINE_STORAGE_KEY, JSON.stringify(state.machinesByRoom));
+
+// west/south両ルームの筐体マスタを取得し、state.machinesByRoom等のルーム別マップへ格納する
+async function loadRoomMaster() {
+  const [west, south] = await Promise.all([fetchMachineMaster('west'), fetchMachineMaster('south')]);
+  state.machinesByRoom  = { west: west.machines,  south: south.machines };
+  state.sparesByRoom    = { west: west.spares,    south: south.spares };
+  state.assigneesByRoom = { west: west.assignees, south: south.assignees };
 }
-// 改修: 予備リストをlocalStorageから読み込む（無ければデフォルト値を返す）
-// 改修(第4回): ルーム別マップ { west, south } を読み込む
-// 後方互換: 旧データのメインリストに予備が含まれていた場合はそこから抽出する
-function loadSpares() {
+
+// 指定ルームの筐体マスタ（machines/spares/assignees）をサーバーへ全置換保存する
+// 既存のCSV書き込みAPI（apiAppendLegendColor等）と同様、fire-and-forgetで送信し失敗はログのみ
+async function saveRoomMaster(room) {
   try {
-    const raw = localStorage.getItem(SPARE_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        // 旧形式：配列は west ルームへマイグレーション
-        return { west: parsed, south: [] };
-      }
-      // 新形式：{west, south} オブジェクト
-      return {
-        west:  Array.isArray(parsed.west)  ? parsed.west  : HILS_SPARES.slice(),
-        south: Array.isArray(parsed.south) ? parsed.south : [],
-      };
-    }
-    // SPARE_STORAGE_KEY がない場合：MACHINE_STORAGE_KEY の旧形式から予備を抽出
-    const mainRaw = localStorage.getItem(MACHINE_STORAGE_KEY);
-    if (mainRaw) {
-      const mainParsed = JSON.parse(mainRaw);
-      if (Array.isArray(mainParsed)) {
-        const spares = mainParsed.filter(name => name.startsWith('予備'));
-        if (spares.length > 0) return { west: spares, south: [] };
-      }
-    }
-  } catch (_) {}
-  return { west: HILS_SPARES.slice(), south: [] };
+    await fetch(`/api/machines?room=${room}`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        machines:  state.machinesByRoom[room]  || [],
+        spares:    state.sparesByRoom[room]    || [],
+        assignees: state.assigneesByRoom[room] || {},
+      }),
+    });
+  } catch (e) {
+    console.error('筐体マスタCSV保存失敗:', e);
+  }
 }
-// 改修(第4回): ルーム別マップ全体を保存する（引数なし・state.sparesByRoom を参照）
-function saveSpares() {
-  localStorage.setItem(SPARE_STORAGE_KEY, JSON.stringify(state.sparesByRoom));
-}
-// 改修: 担当者マップをlocalStorageから読み込む（無ければ空オブジェクトを返す）
-// 改修(第4回): ルーム別マップ { west, south } を読み込む
-function loadAssignees() {
-  try {
-    const raw = localStorage.getItem(ASSIGNEE_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      // 旧形式判定：{west} キーを持たない場合は旧形式（単純オブジェクト）
-      if (!Object.prototype.hasOwnProperty.call(parsed, 'west')) {
-        return { west: parsed, south: {} };
-      }
-      // 新形式：{west, south} オブジェクト
-      return {
-        west:  (parsed.west  && typeof parsed.west  === 'object') ? parsed.west  : {},
-        south: (parsed.south && typeof parsed.south === 'object') ? parsed.south : {},
-      };
-    }
-  } catch (_) {}
-  return { west: {}, south: {} };
-}
-// 改修(第4回): ルーム別マップ全体を保存する（引数なし・state.assigneesByRoom を参照）
-function saveAssignees() {
-  localStorage.setItem(ASSIGNEE_STORAGE_KEY, JSON.stringify(state.assigneesByRoom));
-}
+
+// 現在ルームのメイン筐体一覧を保存する（呼び出し元は編集操作中の表示ルーム＝state.currentRoom）
+function saveMachines() { saveRoomMaster(state.currentRoom); }
+// 現在ルームの予備一覧を保存する
+function saveSpares() { saveRoomMaster(state.currentRoom); }
+// 現在ルームの担当者マップを保存する
+function saveAssignees() { saveRoomMaster(state.currentRoom); }
 // 改修: 担当者列の表示/非表示フラグをlocalStorageから読み込む（未設定・不正時は true で表示）
 function loadAssigneeVisible() {
   try {
@@ -299,6 +271,13 @@ const KEEP_STATUS_NUMS  = ['90', '91'];
 // 改修: メイン筐体と予備を結合した全環境名リストを返す（行インデックス計算に使用）
 function getAllMachines() {
   return [...state.machines, ...state.spares];
+}
+
+// 改修(筐体マスタ共通化): 筐体名の重複判定用に前後空白除去+小文字化して正規化する
+// 南ルームはSP予約由来の設備名とCSVマスタの既存名が表記ゆれで重複しうるため、
+// 追加・マージ処理では必ずこの正規化キーで突合すること
+function normalizeMachineName(name) {
+  return String(name || '').trim().toLowerCase();
 }
 
 // 改修(第4回): 現在ルームのデータを state.machines/spares/assignees へバインドする
@@ -566,8 +545,12 @@ function buildSpPayload(resData) {
     end:     resData.end,
     label:   resData.label     || '',
     color,
-    user:    resData.applicant || '',  // 改修: 使用者名列には申請者欄の値を使用
-    email:   resData.email     || '',  // 改修: 使用者アドレス列へ申請者メールアドレスを転記
+    // 改修(不具合修正): 従来ここで user に resData.applicant（申請者欄の値）を詰めており、
+    // 借用者欄（resData.user）の値がSPへ一切送られていなかった（借用者名列が常に空になる原因）。
+    // borrower/user 双方をそのまま送り、backend側 toSpFields() で借用者名列/使用者名列に振り分ける
+    user:      resData.user      || '',  // 借用者（f-user）
+    applicant: resData.applicant || '',  // 申請者（f-applicant）
+    email:     resData.email     || '',  // 改修: 使用者アドレス列へ申請者メールアドレスを転記
   };
 }
 
@@ -1107,7 +1090,9 @@ function renderCalendar() {
       const input    = prompt('追加する筐体名を入力してください', defName);
       if (!input || !input.trim()) return;
       const trimmed = input.trim();
-      if (getAllMachines().includes(trimmed)) {
+      // 改修(筐体マスタ共通化): 表記ゆれ（前後空白・大小文字）を無視して重複判定する
+      const trimmedNorm = normalizeMachineName(trimmed);
+      if (getAllMachines().some(m => normalizeMachineName(m) === trimmedNorm)) {
         alert(`「${trimmed}」はすでに存在します。`);
         return;
       }
@@ -1960,8 +1945,21 @@ document.getElementById('manual-btn').addEventListener('click', () => {
   setStatus('マニュアルは準備中です');
 });
 
+// 改修(不具合修正): 事務局アクションリストの「承知/辞退/期間変更」列を更新する共通ヘルパー。
+// fetchはHTTPエラーでも例外を投げないため、response.okを確認して呼び出し元のcatchへ失敗を伝える
+// （従来はここを確認しておらず、SP書き込み失敗時も画面上は成功表示になってしまっていた）
+async function patchActionAccept(itemId, acceptStatus) {
+  if (!itemId) return;
+  const res = await fetch(`/api/action-item/${itemId}/accept`, {
+    method:  'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ acceptStatus }),
+  });
+  if (!res.ok) throw new Error(`承知/辞退列の更新に失敗しました（HTTP ${res.status}）`);
+}
+
 // 改修(第14回): 承知/辞退ページのボタンハンドラ — 実処理に置換（W-9）
-// 変更依頼ボタン: PMOへ予約内容変更依頼メール送信
+// 変更依頼ボタン: 事務局アクションリストへ「期間変更」記録＋PMOへ予約内容変更依頼メール送信
 document.getElementById('accept-change-btn').addEventListener('click', async () => {
   const reason = document.getElementById('accept-change-reason').value.trim();
   if (!reason) {
@@ -1972,7 +1970,10 @@ document.getElementById('accept-change-btn').addEventListener('click', async () 
   const newStart = document.getElementById('accept-new-start').value;
   const newEnd   = document.getElementById('accept-new-end').value;
   try {
-    // 改修(メール文面): 提案資料②に合わせて件名・本文を更新
+    // 改修(不具合修正): ①アクションリストの承知/辞退/期間変更列を「期間変更」に更新
+    // （ステータス列・希望終了日・理由のSP書き込みは既存の別画面「期間変更申請」機能の範疇のため今回は行わない）
+    await patchActionAccept(state.actionItemId, '期間変更');
+    // ② 改修(メール文面): 提案資料②に合わせて件名・本文を更新
     const chgMachine = state.actionHilsRes?.machine || '';
     await sendMail(
       MAIL_PMO_ADDRESS,
@@ -2005,14 +2006,8 @@ document.getElementById('accept-ok-btn').addEventListener('click', async () => {
   // URLのidはTitle値のため、SP内部IDを保持したstate.actionItemIdを使用する
   const acceptId = state.actionItemId;  // 第12回で保持したSP内部ID
   try {
-    if (acceptId) {
-      // ① アクションリストの承知/辞退列を「承知」に更新
-      await fetch(`/api/action-item/${acceptId}/accept`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ acceptStatus: '承知' }),
-      });
-    }
+    // ① アクションリストの承知/辞退/期間変更列を「承知」に更新
+    await patchActionAccept(acceptId, '承知');
     // ② PMOへ承知メール送信（改修(メール文面): 提案資料③に合わせて件名・本文を更新）
     const okMachine = state.actionHilsRes?.machine || '';
     await sendMail(
@@ -2052,9 +2047,11 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ status: '91.申請者取り下げ' }),
       });
+      // ② 改修(不具合修正): 承知ボタンと異なりこれまで呼んでいなかった。承知/辞退/期間変更列を「辞退」に更新
+      await patchActionAccept(rejectId, '辞退');
       // 改修: 1案件=1予約ガード用に現在ステータスを追従
       state.actionStatus = '91.申請者取り下げ';
-      // ② 統合HILS使用履歴リストから当該行を削除（突合成功時のみ。失敗時は辞退処理を継続）
+      // ③ 統合HILS使用履歴リストから当該行を削除（突合成功時のみ。失敗時は辞退処理を継続）
       if (state.actionHilsId) {
         await fetch(`/api/reservations/${state.actionHilsId}`, { method: 'DELETE' });
         // 改修(起動連携): SP行削除に合わせてCSVの該当行も削除する
@@ -2064,7 +2061,7 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
         }
       }
     }
-    // ③ PMOへ辞退メール送信（改修(メール文面): 提案資料④に合わせて件名・本文を更新）
+    // ④ PMOへ辞退メール送信（改修(メール文面): 提案資料④に合わせて件名・本文を更新）
     const rejMachine = state.actionHilsRes?.machine || '';
     await sendMail(
       MAIL_PMO_ADDRESS,
@@ -2835,15 +2832,18 @@ async function init() {
       // 改修: 1案件=1予約ガード用に現在ステータスを保持
       state.actionStatus = actionItem.status || '';
       // 改修(第14回): 辞退時の使用履歴削除用に、対応する使用履歴行のSP idを特定して保持
-      // 突合キー: label（machineType）+ user（email）。一致しなければ削除はスキップする（辞退処理自体は継続）
+      // 改修(不具合修正): 突合キーを machine/label（machineType）に変更。
+      // 旧条件は label(案件名)===machineType(機種呼称) かつ user(使用者名/人名)===email(メールアドレス) という
+      // 別概念同士の比較で、通常はまず一致せず _hit が見つからなかった（承知/辞退ページのメールに
+      // 筐体名が入らない・辞退時に使用履歴が削除されない不具合の原因）。renderAcceptInfo()の
+      // フォールバック突合（実績あり）と同じ比較に揃える
       state.actionHilsId  = null;
       // 改修(起動連携): 辞退時のCSV行削除用に設備/開始日/終了日も保持する
       state.actionHilsRes = null;
       try {
         const _list = await fetch('/api/reservations').then(r => r.json());
         const _hit  = _list.find(x =>
-          x.label === (actionItem.machineType || '') &&
-          (!actionItem.email || x.user === actionItem.email)
+          x.machine === (actionItem.machineType || '') || x.label === (actionItem.machineType || '')
         );
         if (_hit) {
           state.actionHilsId  = _hit.id;
@@ -2874,9 +2874,8 @@ async function init() {
     }
   }
 
-  state.machinesByRoom  = loadMachines();
-  state.sparesByRoom    = loadSpares();
-  state.assigneesByRoom = loadAssignees();
+  // 改修(筐体マスタ共通化): 筐体マスタCSV（west/south）をサーバーから取得する
+  await loadRoomMaster();
   syncRoomViews();
   document.getElementById('room-select').value = state.currentRoom;
 
@@ -2926,11 +2925,17 @@ async function init() {
       };
     });
     // 改修(起動連携): SP予約のdistinct設備名を南ルームの筐体一覧に反映（行を動的生成）
-    const spMachines = [...new Set(state.reservations.map(r => r.machine).filter(Boolean))];
-    const existing   = state.machinesByRoom.south || [];
-    spMachines.forEach(m => { if (!existing.includes(m)) existing.push(m); });
+    // 改修(筐体マスタ共通化): 表記ゆれ（前後空白・大小文字）を無視して重複追加を防止する
+    const spMachines   = [...new Set(state.reservations.map(r => r.machine).filter(Boolean))];
+    const existing     = state.machinesByRoom.south || [];
+    const existingNorm = new Set(existing.map(normalizeMachineName));
+    spMachines.forEach(m => {
+      const norm = normalizeMachineName(m);
+      if (!existingNorm.has(norm)) { existing.push(m); existingNorm.add(norm); }
+    });
     state.machinesByRoom.south = existing;
-    saveMachines();
+    // 改修(筐体マスタ共通化): 南ルームへの反映のためstate.currentRoomに関わらず'south'を明示保存する
+    saveRoomMaster('south');
     syncRoomViews();
     _nextLocalId = state.reservations.reduce((m, r) => Math.max(m, r._id || 0), 0) + 1;
     saveReservations(state.reservations);
@@ -2970,11 +2975,17 @@ async function init() {
     }));
     state.reservations = state.reservations.concat(statusReservations);
     // 改修(状態分離): 疑似予約の設備名も南ルームの筐体一覧に反映する（行を動的生成）
-    const statusMachines = [...new Set(statusReservations.map(r => r.machine).filter(Boolean))];
-    const existingSouth  = state.machinesByRoom.south || [];
-    statusMachines.forEach(m => { if (!existingSouth.includes(m)) existingSouth.push(m); });
+    // 改修(筐体マスタ共通化): 表記ゆれ（前後空白・大小文字）を無視して重複追加を防止する
+    const statusMachines   = [...new Set(statusReservations.map(r => r.machine).filter(Boolean))];
+    const existingSouth    = state.machinesByRoom.south || [];
+    const existingSouthNorm = new Set(existingSouth.map(normalizeMachineName));
+    statusMachines.forEach(m => {
+      const norm = normalizeMachineName(m);
+      if (!existingSouthNorm.has(norm)) { existingSouth.push(m); existingSouthNorm.add(norm); }
+    });
     state.machinesByRoom.south = existingSouth;
-    saveMachines();
+    // 改修(筐体マスタ共通化): 南ルームへの反映のためstate.currentRoomに関わらず'south'を明示保存する
+    saveRoomMaster('south');
     syncRoomViews();
     saveReservations(state.reservations);
   }
@@ -3006,6 +3017,23 @@ async function saveCalendarImage() {
   const legendPanel = document.getElementById('legend-panel');
   if (!ganttTable) return;
 
+  // 改修(可視範囲スクショ): スクロールで隠れた行・日付列を除外するため、
+  // レンダリング前に現在の可視ビューポート（スクロール位置・表示サイズ）と
+  // 固定枠（左端の筐体名/担当者列、上端の月見出し/日付ヘッダ行）のサイズを取得しておく
+  const ganttWrapper    = ganttTable.closest('.gantt-wrapper');
+  const gtHead          = document.getElementById('gantt-head');
+  const headerMachineTh = gtHead ? gtHead.querySelector('th.machine-col')  : null;
+  const headerAssigneeTh = gtHead ? gtHead.querySelector('th.assignee-col') : null;
+  const viewScrollLeft = ganttWrapper ? ganttWrapper.scrollLeft   : 0;
+  const viewScrollTop  = ganttWrapper ? ganttWrapper.scrollTop    : 0;
+  const viewWidth      = ganttWrapper ? ganttWrapper.clientWidth  : ganttTable.clientWidth;
+  const viewHeight     = ganttWrapper ? ganttWrapper.clientHeight : ganttTable.clientHeight;
+  // 固定列幅（担当者列が非表示のときはoffsetWidthが0になるため無条件加算でよい）
+  const frozenColWidth  = (headerMachineTh ? headerMachineTh.offsetWidth : 0)
+                         + (headerAssigneeTh ? headerAssigneeTh.offsetWidth : 0);
+  // 固定ヘッダ高（月見出し行＋日付ヘッダ行の合計）
+  const frozenHeadHeight = gtHead ? gtHead.getBoundingClientRect().height : 0;
+
   captureBtn.disabled = true;
   setStatus('画像を生成中...', 'orange');
 
@@ -3024,21 +3052,57 @@ async function saveCalendarImage() {
   try {
     const OPT = { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false };
 
+    // 改修(可視範囲スクショ・不具合修正): html2canvasはposition:stickyの固定列/固定ヘッダを
+    // 「スクロール後に貼り付いた画面位置」で描画してしまい、可視範囲クロップ（x=0/y=0起点の前提）と
+    // 座標がズレて筐体名列・担当者列が撮影結果から欠落する不具合があった。撮影の瞬間だけ
+    // sticky解除クラスを付与し、テーブル本来の静的位置で描画させることで解消する（style.css参照）
+    ganttTable.classList.add('capturing');
     const tableCanvas = await html2canvas(ganttTable, OPT);
+    // 改修(可視範囲スクショ): 凡例は従来通り全件展開して撮影する（ユーザー確定事項）
     const legendCanvas = legendPanel
       ? await html2canvas(legendPanel, OPT)
       : null;
 
-    const totalW = tableCanvas.width + (legendCanvas ? legendCanvas.width : 0);
-    const totalH = Math.max(tableCanvas.height, legendCanvas ? legendCanvas.height : 0);
+    // 改修(可視範囲スクショ): tableCanvas（予約表全体）から「画面に映っている範囲」だけを
+    // 固定枠（左端の筐体名/担当者列・上端の月見出し/日付ヘッダ行）を保持したまま切り出す
+    const scale     = OPT.scale;
+    const fullW     = tableCanvas.width;
+    const fullH     = tableCanvas.height;
+    const colWPx    = Math.round(frozenColWidth   * scale);
+    const headHPx   = Math.round(frozenHeadHeight * scale);
+    const scrollLPx = Math.round(viewScrollLeft    * scale);
+    const scrollTPx = Math.round(viewScrollTop     * scale);
+    // ビューポート幅・高さは表全体の実サイズでクランプする（表がビューポートより小さい場合の対策）
+    const viewWPx   = Math.min(Math.round(viewWidth  * scale), fullW);
+    const viewHPx   = Math.min(Math.round(viewHeight * scale), fullH);
+    const bodyWPx   = Math.max(0, Math.min(viewWPx - colWPx,  fullW - colWPx  - scrollLPx));
+    const bodyHPx   = Math.max(0, Math.min(viewHPx - headHPx, fullH - headHPx - scrollTPx));
+
+    const viewCanvas = document.createElement('canvas');
+    viewCanvas.width  = viewWPx;
+    viewCanvas.height = viewHPx;
+    const vctx = viewCanvas.getContext('2d');
+    vctx.fillStyle = '#ffffff';
+    vctx.fillRect(0, 0, viewWPx, viewHPx);
+    // 左上コーナー（筐体名/担当者ヘッダ×月見出し/日付ヘッダの交差部分）
+    vctx.drawImage(tableCanvas, 0, 0, colWPx, headHPx, 0, 0, colWPx, headHPx);
+    // 上ヘッダ（スクロールで隠れていない可視日付範囲）
+    vctx.drawImage(tableCanvas, colWPx + scrollLPx, 0, bodyWPx, headHPx, colWPx, 0, bodyWPx, headHPx);
+    // 左固定列（スクロールで隠れていない可視行範囲）
+    vctx.drawImage(tableCanvas, 0, headHPx + scrollTPx, colWPx, bodyHPx, 0, headHPx, colWPx, bodyHPx);
+    // 本体（可視範囲のみ）
+    vctx.drawImage(tableCanvas, colWPx + scrollLPx, headHPx + scrollTPx, bodyWPx, bodyHPx, colWPx, headHPx, bodyWPx, bodyHPx);
+
+    const totalW = viewCanvas.width + (legendCanvas ? legendCanvas.width : 0);
+    const totalH = Math.max(viewCanvas.height, legendCanvas ? legendCanvas.height : 0);
     const merged = document.createElement('canvas');
     merged.width  = totalW;
     merged.height = totalH;
     const ctx = merged.getContext('2d');
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, totalW, totalH);
-    ctx.drawImage(tableCanvas, 0, 0);
-    if (legendCanvas) ctx.drawImage(legendCanvas, tableCanvas.width, 0);
+    ctx.drawImage(viewCanvas, 0, 0);
+    if (legendCanvas) ctx.drawImage(legendCanvas, viewCanvas.width, 0);
 
     const now = new Date();
     const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
@@ -3060,6 +3124,8 @@ async function saveCalendarImage() {
     console.error('画像保存エラー:', err);
     setStatus('画像の保存に失敗しました', '#e05252');
   } finally {
+    // 改修(可視範囲スクショ・不具合修正): 撮影用のsticky解除クラスを復元
+    ganttTable.classList.remove('capturing');
     if (legendPanel) {
       legendPanel.style.overflowY = prevLegendOverflowY;
       legendPanel.style.height    = prevLegendHeight;
