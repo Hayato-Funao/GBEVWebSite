@@ -239,6 +239,20 @@ function applyAddressVisibility(room) {
   tbl.classList.toggle('address-hidden', room !== 'south');
 }
 
+// 改修: 南HILSルームでは担当者列がそもそも不要なため、ルームに応じて列自体の表示/非表示と
+// チェックボックスの有効/無効を切り替える。南HILSルームでは常に非表示・操作不可、
+// 西HILSルームでは保存済みのユーザー設定（チェックボックス）に従って表示/非表示を復元する。
+function applyAssigneeVisibilityForRoom(room) {
+  const chk = document.getElementById('assignee-visible-chk');
+  if (room === 'south') {
+    applyAssigneeVisibility(false);
+    if (chk) chk.disabled = true;
+  } else {
+    if (chk) chk.disabled = false;
+    applyAssigneeVisibility(loadAssigneeVisible());
+  }
+}
+
 // ────────────────────────────────────────────
 // 予約ストア（localStorage）
 // ────────────────────────────────────────────
@@ -280,6 +294,8 @@ const state = {
   selectedResId: null,
   anchorCell:    null,
   formMode:      null,  // 改修: サイドパネル表示中のモード('register'|'edit'|'view'|null)
+  // 改修: 複数筐体（行）をまたぐ一括登録用。登録ダイアログ表示中のみ対象筐体名配列を保持する（単一選択時は要素数1、非登録時はnull）
+  multiMachines: null,
   // 改修(第12回): 起動時に取得した事務局アクションリストのID（W-6）
   actionItemId:  null,
   // 改修: 1案件=1予約ガード判定用の現在ステータス（"N.xxxx"形式）
@@ -303,6 +319,23 @@ function actionStatusNum(s) { return String(s || '').split('.')[0]; }
 const BLOCK_STATUS_NUMS = ['1', '3', '9', '10'];
 // 予約削除時にステータスを初期値へ戻さない番号（否認・取り下げの管理状態を維持）
 const KEEP_STATUS_NUMS  = ['90', '91'];
+
+// ────────────────────────────────────────────
+// 改修(案件跨ぎ誤操作防止): 別案件（別?id=）で登録された予約への編集・削除をブロックするための判定
+// ────────────────────────────────────────────
+// res.actionListId（登録時の案件ID）と現在開いている案件(state.actionTitleId)が
+// 両方とも設定済みかつ不一致の場合のみ「別案件の予約」と判定する。
+// 案件に紐づかない予約（予備日・設備故障・休日・手動登録）や、案件コンテキスト無しで
+// 開いている全体管理画面（?id=を指定していない場合）には一切影響しない。
+function isForeignCaseReservation(res) {
+	if (!res || res.actionListId == null) return false;
+	if (!state.actionTitleId) return false;
+	return String(res.actionListId) !== String(state.actionTitleId);
+}
+// 別案件予約の操作をブロックした際に表示する警告文
+function alertForeignCaseReservation(res) {
+	alert('この予約は別案件（予約ID: ' + res.actionListId + '）で登録されています。該当案件の起動リンクから開いて操作してください。');
+}
 
 // 改修: メイン筐体と予備を結合した全環境名リストを返す（行インデックス計算に使用）
 function getAllMachines() {
@@ -625,7 +658,14 @@ async function apiDeleteStatus(machine, start, end) {
 
 // 改修(SP連携マージ): SP列に対応する最小項目を組み立てる
 // 改修: user（使用者名列）は申請者欄の値を使用。email（使用者アドレス列）を追加
-function buildSpPayload(resData) {
+// 改修(事務局アクションリストID誤上書き防止): 第2引数isCreateを追加。
+// isCreate=true（新規登録）の場合のみ、今開いている案件ID(state.actionTitleId)を
+// actionListIdとして転記する。isCreate=false（既存予約の更新）の場合は、
+// 予約が元々持つactionListId（resData.actionListId）をそのまま維持し、
+// 今開いている案件IDで上書きしない。従来はupdate時も無条件に今開いている案件IDを
+// 書き込んでいたため、別案件の予約を編集・ドラッグ移動・筐体名一括リネームした際に
+// その予約の事務局アクションリストIDが今開いている案件IDへ誤って書き換わる不具合があった。
+function buildSpPayload(resData, isCreate) {
   const lm    = getLegendMap(_legend);
   const color = (resData.legendId && lm[resData.legendId]) ? lm[resData.legendId].color : (resData.color || '#fde68a');
   return {
@@ -642,8 +682,11 @@ function buildSpPayload(resData) {
     email:     resData.email     || '',  // 改修: 使用者アドレス列へ申請者メールアドレスを転記
     // 改修: アドレス列（筐体ごとの手入力識別情報。メールアドレスとは別物。南HILSルームのみ）
     address:   resData.address   || '',
-    // 改修: 事務局アクションリストID列へ、起動URLのid値（SP内部ID）を数値で転記。未起動・非数値時は送らない
-    actionListId: (state.actionTitleId && /^\d+$/.test(state.actionTitleId)) ? Number(state.actionTitleId) : undefined,
+    // 改修(事務局アクションリストID誤上書き防止): 新規登録時のみ今開いている案件IDを転記。
+    // 更新時は予約が元々持つactionListIdをそのまま維持する
+    actionListId: isCreate
+      ? ((state.actionTitleId && /^\d+$/.test(state.actionTitleId)) ? Number(state.actionTitleId) : undefined)
+      : resData.actionListId,
   };
 }
 
@@ -653,7 +696,8 @@ async function apiCreate(resData) {
     const res = await fetch('/api/reservations', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(buildSpPayload(resData)),
+      // 改修(事務局アクションリストID誤上書き防止): 新規登録なのでisCreate=true
+      body:    JSON.stringify(buildSpPayload(resData, true)),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -672,7 +716,9 @@ async function apiUpdate(spId, resData) {
     const res = await fetch(`/api/reservations/${spId}`, {
       method:  'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(buildSpPayload(resData)),
+      // 改修(事務局アクションリストID誤上書き防止): 既存予約の更新なのでisCreate=false
+      // （予約が元々持つactionListIdを維持し、今開いている案件IDで上書きしない）
+      body:    JSON.stringify(buildSpPayload(resData, false)),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return true;  // 改修: 呼び出し元で成否判定できるよう戻り値を追加（筐体名リネーム時の失敗カウント用）
@@ -802,16 +848,17 @@ function renderCalendar() {
   const existingCg = table.querySelector('colgroup');
   if (existingCg) existingCg.remove();
   const cg = document.createElement('colgroup');
-  // 筐体列（170px固定）
-  const colMachine = document.createElement('col');
-  colMachine.className = 'col-machine';
-  colMachine.style.width = '170px';
-  cg.appendChild(colMachine);
+  // 改修: 列順入れ替え（アドレス→筐体→担当者）。アドレス列を筐体列より先に追加する
   // 改修: アドレス列（筐体ごとの手入力識別情報。メールアドレスとは別物。南HILSルームのみ表示、幅80px/非表示0px）
   const colAddress = document.createElement('col');
   colAddress.className = 'col-address';
   colAddress.style.width = table.classList.contains('address-hidden') ? '0px' : '80px';
   cg.appendChild(colAddress);
+  // 筐体列（170px固定）
+  const colMachine = document.createElement('col');
+  colMachine.className = 'col-machine';
+  colMachine.style.width = '170px';
+  cg.appendChild(colMachine);
   // 担当者列（表示時80px / 非表示時0px）
   const colAssignee = document.createElement('col');
   colAssignee.className = 'col-assignee';
@@ -833,18 +880,19 @@ function renderCalendar() {
   // 行1: 月見出し行
   const monthRow   = document.createElement('tr');
   // 改修(第7回): 筐体列・担当者列は rowSpan=2 で両ヘッダ行を占有
-  const thMachine  = document.createElement('th');
-  thMachine.className   = 'machine-col';
-  thMachine.rowSpan     = 2;
-  thMachine.textContent = '筐体';
-  monthRow.appendChild(thMachine);
-
+  // 改修: 列順入れ替え（アドレス→筐体→担当者）。アドレス列見出しを筐体列より先に追加する
   // 改修: アドレス列見出し（筐体ごとの手入力識別情報。メールアドレスとは別物）
   const thAddress = document.createElement('th');
   thAddress.className   = 'address-col';
   thAddress.rowSpan     = 2;
   thAddress.textContent = 'アドレス';
   monthRow.appendChild(thAddress);
+
+  const thMachine  = document.createElement('th');
+  thMachine.className   = 'machine-col';
+  thMachine.rowSpan     = 2;
+  thMachine.textContent = '筐体';
+  monthRow.appendChild(thMachine);
 
   const thAssignee = document.createElement('th');
   thAssignee.className   = 'assignee-col';
@@ -1047,7 +1095,8 @@ function renderCalendar() {
       });
     }
 
-    tr.appendChild(tdMachine);
+    // 改修: 列順入れ替え（アドレス→筐体→担当者）のため、tdMachineのDOM追加をここでは行わず
+    // アドレスセル構築後にまとめて追加する（tdMachine自体はここまでで構築済み）
 
     // 改修: アドレスセル（筐体ごとの手入力識別情報。メールアドレスとは別物。南HILSルームのみ）
     const tdAddress = document.createElement('td');
@@ -1088,7 +1137,9 @@ function renderCalendar() {
       });
     }
 
+    // 改修: 列順入れ替え（アドレス→筐体→担当者）。アドレス列を筐体列より先にDOM追加する
     tr.appendChild(tdAddress);
+    tr.appendChild(tdMachine);
 
     // 担当者セル
     const tdAssignee = document.createElement('td');
@@ -1300,13 +1351,18 @@ function renderCalendar() {
       saveMachines();
       renderCalendar();
     });
-    addTdHeader.appendChild(addBtn);
-    addTr.appendChild(addTdHeader);
-
-    // 改修: アドレス列（筐体追加行の空セル）
+    // 改修: 列順入れ替え（アドレス→筐体→担当者）。アドレス列の空セルを筐体列より先に追加する
     const addTdAddress = document.createElement('td');
     addTdAddress.className = 'address-col machine-add-cell';
+    // 改修: 筐体追加(＋)ボタンは実際に表示されている一番左の列に置く。
+    // 西HILSルームはアドレス列が非表示のため筐体列に、南HILSルームはアドレス列に配置する
+    if (state.currentRoom === 'south') {
+      addTdAddress.appendChild(addBtn);
+    } else {
+      addTdHeader.appendChild(addBtn);
+    }
     addTr.appendChild(addTdAddress);
+    addTr.appendChild(addTdHeader);
 
     const addTdAssignee = document.createElement('td');
     addTdAssignee.className = 'assignee-col machine-add-cell';
@@ -1381,6 +1437,11 @@ function onResMouseDown(e) {
   const row   = parseInt(td.dataset.row);
   const res   = state.reservations[resId];
   if (!res) return;
+  // 改修(案件跨ぎ誤操作防止): 別案件で登録された予約はドラッグでの移動・期間変更をさせない
+  if (isForeignCaseReservation(res)) {
+    alertForeignCaseReservation(res);
+    return;
+  }
 
   const rect  = td.getBoundingClientRect();
   const xIn   = e.clientX - rect.left;
@@ -1559,7 +1620,6 @@ function checkOverlap(excludeResId, machine, ns, ne) {
 // セル範囲ドラッグ（新規選択用）
 // ────────────────────────────────────────────
 let _isDragging        = false;
-let _dragRow           = null;
 let _reclickCandidate  = false;
 let _dragMoved         = false;
 
@@ -1573,7 +1633,6 @@ function onCellMouseDown(e) {
   _dragMoved        = false;
 
   _isDragging = true;
-  _dragRow    = row;
 
   state.selectedResId = null;
   state.selectedCells = new Set([`${row}-${col}`]);
@@ -1584,24 +1643,29 @@ function onCellMouseDown(e) {
 }
 
 // 改修(第7回): 曜日判定を viewDates[c] から取得
+// 改修: 統合HILS利用時にSCLX+HELIOS等を同時予約できるよう、行ロックを撤廃し
+// アンカー行〜現在行 × アンカー列〜現在列の矩形範囲（複数筐体をまたぐ範囲）を選択対象にする
 function onCellMouseOver(e) {
   if (!_isDragging || !state.anchorCell) return;
   const td  = e.currentTarget;
   const row = parseInt(td.dataset.row);
   const col = parseInt(td.dataset.col);
-  if (row !== _dragRow) return;
-
-  if (col !== state.anchorCell.col) _dragMoved = true;
 
   const anchor = state.anchorCell;
+  if (row !== anchor.row || col !== anchor.col) _dragMoved = true;
+
   const minCol = Math.min(anchor.col, col);
   const maxCol = Math.max(anchor.col, col);
+  const minRow = Math.min(anchor.row, row);
+  const maxRow = Math.max(anchor.row, row);
 
   state.selectedCells = new Set();
-  for (let c = minCol; c <= maxCol; c++) {
-    // 改修(第7回): 曜日判定を viewDates[c].getDay() で直接取得
-    const wday = state.viewDates[c].getDay();
-    if (wday !== 0 && wday !== 6) state.selectedCells.add(`${row}-${c}`);
+  for (let r = minRow; r <= maxRow; r++) {
+    for (let c = minCol; c <= maxCol; c++) {
+      // 改修(第7回): 曜日判定を viewDates[c].getDay() で直接取得
+      const wday = state.viewDates[c].getDay();
+      if (wday !== 0 && wday !== 6) state.selectedCells.add(`${r}-${c}`);
+    }
   }
   renderCalendar();
 
@@ -1791,11 +1855,12 @@ function applyDateColWidth() {
   table.style.width = (machineW + addressW + assigneeW + totalDateCols * w) + 'px';
   // 改修(第7回追補2): 担当者列 sticky left を筐体列の実描画幅に追従させる
   // ハードコードの left:169px がずれた場合でも隙間なく密着させるための恒久対策
+  // 改修: 列順入れ替え（アドレス→筐体→担当者）。筐体列はアドレス列の実描画幅（非表示時は0）に追従させる
   const machineTh = table.querySelector('thead th.machine-col');
   const addressTh = table.querySelector('thead th.address-col');
-  if (machineTh) table.style.setProperty('--address-left', machineTh.offsetWidth + 'px');
+  if (addressTh) table.style.setProperty('--machine-left', addressTh.offsetWidth + 'px');
   if (machineTh) {
-    // 改修: 担当者列 sticky left は「筐体列幅＋アドレス列幅（非表示時は0）」に追従させる
+    // 改修: 担当者列 sticky left は「アドレス列幅（非表示時は0）＋筐体列幅」に追従させる（列の並び順が変わっても合計幅は不変）
     const addressOffsetW = addressTh ? addressTh.offsetWidth : 0;
     table.style.setProperty('--assignee-left', (machineTh.offsetWidth + addressOffsetW) + 'px');
   }
@@ -1862,12 +1927,16 @@ document.getElementById('room-select').addEventListener('change', e => {
   syncRoomViews();
   // 改修: アドレス列は南HILSルームのみ表示（renderCalendar前にクラスを確定させる）
   applyAddressVisibility(room);
+  // 改修: 担当者列は南HILSルームでは不要のため列自体を非表示にする（renderCalendar前にクラスを確定させる）
+  applyAssigneeVisibilityForRoom(room);
   clearSelection();
   renderCalendar();
 });
 
 // 改修: 担当者列チェックボックスの change ハンドラ
 document.getElementById('assignee-visible-chk').addEventListener('change', e => {
+  // 改修: 南HILSルームでは担当者列自体が不要なため、チェックボックス操作を無効化している（保険として再度ガード）
+  if (state.currentRoom === 'south') return;
   const visible = e.target.checked;
   localStorage.setItem(ASSIGNEE_VISIBLE_KEY, JSON.stringify(visible));
   applyAssigneeVisibility(visible);
@@ -2354,6 +2423,11 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
 });
 
 function deleteReservation(resId) {
+  // 改修(案件跨ぎ誤操作防止): 別案件で登録された予約は削除させない
+  if (isForeignCaseReservation(state.reservations[resId])) {
+    alertForeignCaseReservation(state.reservations[resId]);
+    return false;
+  }
   // 改修(マージ): 成否を返すよう変更（ダイアログ側で成功時のみ閉じるため）
   if (!confirm('この予約を削除しますか？')) return false;
   // 改修(SP連携マージ): 削除前にspId/設備/日付を退避してSP削除・CSV行削除を非同期実行（楽観更新）
@@ -2420,10 +2494,9 @@ function openRegisterDialog() {
     alert('筐体と期間をカレンダー上で選択してから「＋ 登録」を押してください');
     return;
   }
-  const rows = [...sel].map(k => parseInt(k.split('-')[0]));
-  if (new Set(rows).size !== 1) return;
-
-  const row    = rows[0];
+  // 改修: 統合HILS利用時にSCLX+HELIOS等を同時予約できるよう、複数行（筐体）をまたぐ選択を許可する。
+  // 選択行が複数の場合は各筐体に同一内容の予約を個別登録するため、対象筐体名を昇順で保持しておく
+  const rows = [...new Set([...sel].map(k => parseInt(k.split('-')[0])))].sort((a, b) => a - b);
   const cols   = [...sel].map(k => parseInt(k.split('-')[1]));
   const minCol = Math.min(...cols);
   const maxCol = Math.max(...cols);
@@ -2432,8 +2505,12 @@ function openRegisterDialog() {
   const endDate   = state.viewDates[maxCol];
   const defLeg    = _legend.length > 0 ? _legend[0].id : '';
 
+  const allMachines = getAllMachines();
+  // 改修: 複数筐体一括登録用に選択行を筐体名配列として保持する（単一選択時は要素数1）
+  state.multiMachines = rows.map(r => allMachines[r]);
+
   showDialog('予約登録', {
-    machine:   getAllMachines()[row],
+    machine:   allMachines[rows[0]],
     startIso:  dateToIso(startDate),
     endIso:    dateToIso(endDate),
     label:     '',
@@ -2441,7 +2518,7 @@ function openRegisterDialog() {
     user:      '',             // 改修(SP連携マージ): 借用者
     applicant: '',
     remark:    '',
-    assignee:  state.assignees[getAllMachines()[row]] || '',  // 改修: ダイアログ担当者欄の初期値
+    assignee:  state.assignees[allMachines[rows[0]]] || '',  // 改修: ダイアログ担当者欄の初期値
     status:    'normal',
     room:      state.currentRoom,
     marks:     [],              // 改修(第8回): 検証完了日★初期値（空）
@@ -2451,6 +2528,13 @@ function openRegisterDialog() {
 function openEditDialog(resId) {
   const res = state.reservations[resId];
   if (!res) return;
+  // 改修(案件跨ぎ誤操作防止): 別案件で登録された予約は編集ダイアログを開かせない
+  if (isForeignCaseReservation(res)) {
+    alertForeignCaseReservation(res);
+    return;
+  }
+  // 改修: 編集対象は常に単一筐体のため、複数筐体一括登録用の状態を必ずリセットする
+  state.multiMachines = null;
   showDialog('予約を編集', {
     machine:   res.machine,
     startIso:  res.start.split('T')[0],
@@ -2471,6 +2555,8 @@ function openEditDialog(resId) {
 function openViewDialog(resId) {
   const res = state.reservations[resId];
   if (!res) return;
+  // 改修: 閲覧対象は常に単一筐体のため、複数筐体一括登録用の状態を必ずリセットする
+  state.multiMachines = null;
   showDialog('予約内容の確認', {
     machine:   res.machine,
     startIso:  res.start.split('T')[0],
@@ -2550,18 +2636,22 @@ function showDialog(title, data, mode, resId = null) {
   bodyEl.innerHTML = `
     <div class="form-row">
       <label>ルーム:</label>
+      <!-- 改修: 設置場所（61号棟3F）をルーム名に併記 -->
       <select id="f-room" disabled>
-        <option value="west"${(data.room || 'west') === 'west' ? ' selected' : ''}>西HILSルーム</option>
-        <option value="south"${data.room === 'south' ? ' selected' : ''}>南HILSルーム</option>
+        <option value="west"${(data.room || 'west') === 'west' ? ' selected' : ''}>西HILSルーム（61号棟3F）</option>
+        <option value="south"${data.room === 'south' ? ' selected' : ''}>南HILSルーム（61号棟3F）</option>
       </select>
     </div>
     <div class="form-row">
       <label>筐体:</label>
-      <select id="f-machine">
+      ${(mode === 'register' && state.multiMachines && state.multiMachines.length > 1)
+        ? `<div id="f-machine-multi" class="multi-machine-list" title="矩形選択した筐体すべてに同一内容の予約を個別登録します">${state.multiMachines.join('、')}</div>
+           <input type="hidden" id="f-machine" value="${data.machine}">`
+        : `<select id="f-machine">
         ${getAllMachines().map(m =>
           `<option value="${m}"${m === data.machine ? ' selected' : ''}>${m}</option>`
         ).join('')}
-      </select>
+      </select>`}
     </div>
     <div class="form-row">
       <label>状態:</label>
@@ -2635,6 +2725,10 @@ function showDialog(title, data, mode, resId = null) {
     <div id="f-biz"  class="biz-label"></div>
     <div id="f-warn" class="warn-label hidden"></div>
   `;
+
+  // 改修: 南HILSルームでは担当者列自体が不要なため、登録・編集ダイアログの担当者欄も非表示にする
+  const assigneeRowEl = document.getElementById('form-row-assignee');
+  if (assigneeRowEl) assigneeRowEl.classList.toggle('hidden', data.room === 'south');
 
   function updateSwatch() {
     const legId = document.getElementById('f-legend').value;
@@ -2821,13 +2915,16 @@ function showDialog(title, data, mode, resId = null) {
       return;
     }
     // 改修: ダイアログの担当者欄を state.assignees に反映して担当者列と同期
-    const assigneeVal = (document.getElementById('f-assignee').value || '').trim();
-    if (assigneeVal) {
-      state.assignees[resData.machine] = assigneeVal;
-    } else {
-      delete state.assignees[resData.machine];
+    // 改修: 南HILSルームでは担当者列自体が不要なため、この反映処理を行わない
+    if (state.currentRoom !== 'south') {
+      const assigneeVal = (document.getElementById('f-assignee').value || '').trim();
+      if (assigneeVal) {
+        state.assignees[resData.machine] = assigneeVal;
+      } else {
+        delete state.assignees[resData.machine];
+      }
+      saveAssignees();
     }
-    saveAssignees();
     closeFormPane();
     if (mode === 'register') {
       resData._id = genLocalId();
@@ -2838,6 +2935,46 @@ function showDialog(title, data, mode, resId = null) {
       saveReservations(state.reservations);
       renderCalendar();
       updateInfoPanel();
+
+      // 改修: 統合HILS利用時にSCLX+HELIOS等を同時予約できるよう、複数筐体を選択して登録した場合は
+      // 主筐体（1件目・resData）以外の筐体にも同一内容の予約を個別登録する。
+      // 案件（アクションリスト）連携・確定通知メール送信は主筐体のみに適用し、1案件=1予約の原則を維持する。
+      const extraMachines = (state.multiMachines && state.multiMachines.length > 1)
+        ? state.multiMachines.slice(1)
+        : [];
+      if (extraMachines.length > 0) {
+        showBusy('他の筐体へ登録中...');
+        try {
+          for (const m of extraMachines) {
+            const extraData = {
+              ...resData,
+              machine: m,
+              // 改修: アドレスは筐体ごとの値のため、主筐体のものをそのまま使い回さず筐体別に取得する
+              address: (state.currentRoom === 'south') ? (state.addresses[m] || '') : '',
+            };
+            extraData._id = genLocalId();
+            state.reservations.push(extraData);
+            saveReservations(state.reservations);
+            if (extraData.status !== 'normal') {
+              // 予備日/設備故障/休日: SharePointには一切登録せず状態リストCSVへ記録
+              await apiAppendStatus(extraData);
+              continue;
+            }
+            const extraSpId = await apiCreate(extraData);
+            if (extraSpId != null) {
+              state.reservations[state.reservations.length - 1].spId = extraSpId;
+              saveReservations(state.reservations);
+            }
+            await apiAppendLegendColor(extraData);
+          }
+        } finally {
+          hideBusy();
+          renderCalendar();
+        }
+      }
+      // 改修: 複数筐体一括登録用の状態は使用済みのためリセットする
+      state.multiMachines = null;
+
       // 改修(状態分離): 通常はSharePoint連携、予備日/設備故障/休日は状態リストCSVのみに記録する
       if (resData.status !== 'normal') {
         // 予備日/設備故障/休日: SharePointには一切登録せず状態リストCSVへ記録。案件IDのガードも適用しない
@@ -3251,6 +3388,11 @@ async function init() {
         borrower:  res.borrower || '',
         // 改修(起動連携): 使用履歴リストの予約は南ルームに固定（西ルームではない）
         room:      'south',
+        // 改修(案件跨ぎ誤操作防止・不具合修正): APIレスポンスには含まれていたが、
+        // ここでのフィールド組み立て時にactionListIdをコピーし忘れていたため、
+        // state.reservationsに読み込まれた時点でactionListIdが常にundefinedになり、
+        // isForeignCaseReservationによるガードが常に無効化されてしまっていた。
+        actionListId: res.actionListId,
       };
     });
     // 改修(起動連携): SP予約のdistinct設備名を南ルームの筐体一覧に反映（行を動的生成）
@@ -3321,6 +3463,10 @@ async function init() {
 
   // 改修: アドレス列は南HILSルームのみ表示。初回renderCalendar前にクラスを確定させる
   applyAddressVisibility(state.currentRoom);
+  // 改修: 担当者列チェックボックスの初期状態を保存済みユーザー設定へ復元してから、
+  // 南HILSルームでは担当者列を常に非表示・操作不可にする（初回renderCalendar前にクラスを確定させる）
+  document.getElementById('assignee-visible-chk').checked = loadAssigneeVisible();
+  applyAssigneeVisibilityForRoom(state.currentRoom);
 
   // 改修(第7回): 表示期間を初期化してからカレンダーを描画し、今日へ自動スクロール
   initViewRange();
@@ -3329,9 +3475,6 @@ async function init() {
   // 改修(第7回追補): ウィンドウリサイズ時に日付列幅を自動再計算（一度だけ登録）
   window.addEventListener('resize', applyDateColWidth);
 
-  const assigneeVis = loadAssigneeVisible();
-  document.getElementById('assignee-visible-chk').checked = assigneeVis;
-  applyAssigneeVisibility(assigneeVis);
   renderLegendPanel();
   updateInfoPanel();
 }

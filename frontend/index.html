@@ -21,6 +21,8 @@
     </div>
     <!-- 改修: マニュアルボタン（トップバー右側・ユーザー名表示の左）PDF未配置期間はステータス欄に通知 -->
     <button id="manual-btn" class="btn btn-manual">マニュアル</button>
+    <!-- 改修: HEMS地図リンク（別タブで開く。JSでの制御は不要） -->
+    <a id="map-btn" class="btn btn-manual" href="http://172.25.7.82:5173/map" target="_blank" rel="noopener">地図</a>
     <div class="user-area">
       <span id="user-name"></span>
     </div>
@@ -40,9 +42,10 @@
         <!-- 改修: 予約表を画像として保存するボタン（GUI版の📷保存機能に相当） -->
         <button id="capture-btn"  class="btn btn-capture">📷 保存</button>
         <!-- 改修(第4回): 西/南HILSルーム切替プルダウン（保存ボタンの右隣） -->
+        <!-- 改修: 設置場所（61号棟3F）をルーム名に併記 -->
         <select id="room-select" class="room-select">
-          <option value="west">西HILSルーム</option>
-          <option value="south">南HILSルーム</option>
+          <option value="west">西HILSルーム（61号棟3F）</option>
+          <option value="south">南HILSルーム（61号棟3F）</option>
         </select>
         <!-- 改修: 担当者列の表示/非表示チェックボックス -->
         <label class="assignee-toggle"><input type="checkbox" id="assignee-visible-chk" checked> 担当者列</label>

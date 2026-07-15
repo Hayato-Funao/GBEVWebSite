@@ -102,6 +102,14 @@ body {
 /* 改修: マニュアルボタン（トップバー右側） */
 .btn-manual       { background: #475569; color: #fff; }
 .btn-manual:hover { background: #334155; }
+/* 改修: HEMS地図リンク（<a>タグに.btnを適用するため、button相当の見た目に補正） */
+#map-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  box-sizing: border-box;
+}
 /* 改修: 利用取消依頼ボタン（使用者モード・下部情報パネル） */
 .btn-cancel-request       { background: #dc2626; color: #fff; height: 26px; font-size: 10px; }
 .btn-cancel-request:hover { background: #b91c1c; }
@@ -195,7 +203,10 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   position: sticky;
-  left: 0;
+  /* 改修: 列順入れ替え（アドレス→筐体→担当者）。筐体列はアドレス列の右隣になるため、
+     sticky left をアドレス列の実描画幅に追従させる（applyDateColWidthがCSS変数を設定）。
+     アドレス列非表示時（西HILSルーム）は0pxとなり従来通り左端に固定される */
+  left: var(--machine-left, 0px);
   z-index: 3; /* 改修: 予約バー選択セル(z-index:2)より前面にして固定列が覆われないよう修正 */
 }
 
@@ -209,7 +220,7 @@ body {
   z-index: 5;
 }
 
-/* 改修: アドレス列（筐体列の右隣に sticky 固定。筐体ごとの手入力識別情報でメールアドレスとは別物。南HILSルームのみ表示） */
+/* 改修: アドレス列（列順入れ替えにより左端に sticky 固定。筐体ごとの手入力識別情報でメールアドレスとは別物。南HILSルームのみ表示） */
 .gantt-table th.address-col,
 .gantt-table td.address-col {
   width: 80px;
@@ -224,7 +235,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   position: sticky;
-  left: var(--address-left, 169px); /* 改修: 筐体列の実描画幅に追従（applyDateColWidthがCSS変数を設定）。フォールバック169px */
+  left: 0; /* 改修: 列順入れ替え（アドレス→筐体→担当者）により最左列となったため固定値0 */
   z-index: 3;
   box-shadow: inset 1px 0 0 0 #d1d5db;
 }
@@ -235,9 +246,12 @@ body {
   font: bold 11px 'Meiryo UI', sans-serif;
   z-index: 5;
 }
-/* 改修: アドレス列 非表示クラス（南HILSルーム以外で全行のアドレス列を一括非表示） */
+/* 改修: アドレス列 非表示クラス（南HILSルーム以外で全行のアドレス列を一括非表示）
+   改修(不具合修正): display:none はセルを列カウントから除外してしまい、table-layout:fixed の
+   colgroupと実セルの列対応がズレて隣接列（筐体列・担当者列）の幅が壊れる不具合があったため、
+   列の対応関係を保ったまま列を畳めるvisibility:collapseに変更する */
 .gantt-table.address-hidden th.address-col,
-.gantt-table.address-hidden td.address-col { display: none; }
+.gantt-table.address-hidden td.address-col { visibility: collapse; }
 
 /* 改修: 担当者列（アドレス列の右隣に sticky 固定） */
 .gantt-table th.assignee-col,
@@ -266,10 +280,13 @@ body {
   font: bold 11px 'Meiryo UI', sans-serif;
   z-index: 5;
 }
-/* 改修: 担当者列 非表示クラス（チェックボックス連動）
-   #gantt-table に .assignee-hidden を付与することで全行の担当者列を一括で非表示にする */
+/* 改修: 担当者列 非表示クラス（チェックボックス連動／南HILSルーム強制非表示）
+   #gantt-table に .assignee-hidden を付与することで全行の担当者列を一括で非表示にする
+   改修(不具合修正): display:none はセルを列カウントから除外してしまい、table-layout:fixed の
+   colgroupと実セルの列対応がズレて隣接列の幅が壊れる不具合があったため、
+   列の対応関係を保ったまま列を畳めるvisibility:collapseに変更する */
 .gantt-table.assignee-hidden th.assignee-col,
-.gantt-table.assignee-hidden td.assignee-col { display: none; }
+.gantt-table.assignee-hidden td.assignee-col { visibility: collapse; }
 
 /* 改修(可視範囲スクショ・不具合修正): 撮影中のみsticky解除。
    html2canvasはstickyを「貼り付いた画面位置」で描画するため、スクロールした状態で撮影すると
@@ -613,6 +630,15 @@ body {
 }
 /* 改修(第5回): 自動生成ラベル欄（読み取り専用の見た目） */
 #f-label[readonly] { background: #f1f5f9; color: #475569; }
+/* 改修: 複数筐体一括登録時の対象筐体一覧（読み取り専用の見た目。selectと揃えて表示） */
+.multi-machine-list {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font: 12px 'Meiryo UI', sans-serif;
+}
 /* 改修(第5回): ガントバーのXPXラベルリンク（バー文字色を継承し下線のみ付与） */
 /* 不具合修正: 親 .res-label が pointer-events:none のため auto に戻してクリック可能にする */
 .res-label-link { pointer-events: auto; text-decoration: underline; cursor: pointer; color: inherit; }
