@@ -473,9 +473,11 @@ async function loadMailConfig() {
 
 // 改修(メール文面): 共通件名ビルダ。筐体名があれば末尾に＜筐体名＞を付与
 // 改修: アドレス（筐体ごとの手入力識別情報。メールアドレスとは別物）があれば＜アドレス 筐体名＞に拡張
-function buildMailSubject(title, machine, address) {
+// 改修: 複数筐体一括登録で連動予約がある場合、siblingCount（連動予約の件数）を＜…他N件＞として付記する
+function buildMailSubject(title, machine, address, siblingCount) {
 	const inner  = (address && machine) ? `${address} ${machine}` : (machine || '');
-	const suffix = inner ? `＜${inner}＞` : '';
+	const extra  = siblingCount ? ` 他${siblingCount}件` : '';
+	const suffix = inner ? `＜${inner}${extra}＞` : '';
 	return `【統合HILS（61号棟南HILSルーム）予約】${title}${suffix}`;
 }
 
@@ -690,6 +692,40 @@ function buildSpPayload(resData, isCreate) {
   };
 }
 
+// 改修: 複数筐体一括登録で連動する兄弟予約（同一groupId・自分以外）を取得する
+// groupIdは一括登録時のみ発行される（openRegisterDialog→okBtn.onclick register分岐）。
+// 単独登録の予約はgroupIdを持たないため、常に空配列を返す
+function getGroupSiblings(res) {
+  if (!res || res.groupId == null) return [];
+  return state.reservations.filter(r => r !== res && r.groupId === res.groupId);
+}
+
+// 改修: machine/start/endの組から state.reservations 内の完全なレコードを検索する。
+// state.actionHilsRes 等、SPの生データから作られた簡易オブジェクト（{machine,start,end}のみ・groupId無し）
+// から、groupIdを含む完全なレコードを辿るために使う
+function findFullReservation(partial) {
+  if (!partial) return null;
+  return state.reservations.find(r =>
+    r.machine === partial.machine && r.start === partial.start && r.end === partial.end
+  ) || null;
+}
+
+// 改修: メール件名の件数サフィックス・本文に付記する連動筐体一覧ブロックをまとめて返す。
+// 連動予約が無ければ { count: 0, note: '' } を返し、呼び出し側の文面は従来通りになる
+function getGroupMailInfo(resLike) {
+  const full = (resLike && resLike.groupId != null) ? resLike : findFullReservation(resLike);
+  const siblings = getGroupSiblings(full);
+  if (!siblings.length) return { count: 0, note: '' };
+  const lines = [full, ...siblings].map(r => {
+    const addr = resolveMailAddress(r.machine);
+    return addr ? ` ・${addr} ${r.machine}` : ` ・${r.machine}`;
+  });
+  return {
+    count: siblings.length,
+    note:  `\n■同時登録されている筐体（連動予約）\n${lines.join('\n')}\n`,
+  };
+}
+
 // 改修(SP連携マージ): SPにアイテムを新規作成し、返却された SP の Id を返す
 async function apiCreate(resData) {
   try {
@@ -738,6 +774,42 @@ async function apiDelete(spId) {
   } catch (e) {
     console.error('SP削除失敗:', e);
     setStatus('SP削除に失敗しました', '#ef4444');
+  }
+}
+
+// 改修: 予約1件分の編集内容をSP（使用履歴リスト）／CSV（凡例色リスト・状態リスト）へ同期する。
+// okBtn.onclick の edit 分岐から切り出したもので、呼び出し前に state.reservations[resId] は
+// 変更後の内容へ更新済みであること。prevSpId/prevStatus/prevMachine/prevStart/prevEnd は
+// 変更前の値（正規/非正規の切替判定・旧CSV行の削除キーに使用）。
+// 複数筐体一括登録の連動予約（兄弟）にも同じロジックを使い回すために関数化した。
+async function syncReservationEdit(resId, prevSpId, prevStatus, prevMachine, prevStart, prevEnd) {
+  const wasNormal = prevStatus === 'normal';
+  const isNormal  = (state.reservations[resId].status || 'normal') === 'normal';
+  if (isNormal) {
+    // 改修(SP連携マージ): spIdがあれば更新、なければ新規作成してspIdを保存
+    if (prevSpId != null) {
+      await apiUpdate(prevSpId, state.reservations[resId]);
+    } else {
+      const newSpId = await apiCreate(state.reservations[resId]);
+      if (newSpId != null) {
+        state.reservations[resId].spId = newSpId;
+        saveReservations(state.reservations);
+      }
+    }
+    // 改修(起動連携): 凡例色リストCSVを更新（同一 machine+start+end で上書き）
+    await apiAppendLegendColor(state.reservations[resId]);
+    // 改修(状態分離): 非正規→正規への変更時は、旧・状態リストCSVの行を削除する
+    if (!wasNormal) await apiDeleteStatus(prevMachine, prevStart, prevEnd);
+  } else {
+    // 改修(状態分離): 予備日/設備故障/休日へ変更（または非正規のまま編集）: SPは更新せず状態リストCSVへ記録
+    if (prevSpId != null) {
+      // 正規→非正規への変更: 既存のSP行・凡例色リストCSV行を削除しspIdを外す
+      await apiDelete(prevSpId);
+      await apiDeleteLegendColor(prevMachine, prevStart, prevEnd);
+      state.reservations[resId].spId = null;
+      saveReservations(state.reservations);
+    }
+    await apiAppendStatus(state.reservations[resId]);
   }
 }
 
@@ -2133,14 +2205,17 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
     const extMachine = curRes?.machine || '';
     const curStart   = curRes?.start   || '';
     const curEnd     = curRes?.end     || '';
+    // 改修: 複数筐体一括登録の連動予約があれば件名・本文に付記する
+    const _group = getGroupMailInfo(curRes);
     await sendMail(
       mailConfig.pmoTo,
-      buildMailSubject('期間変更申請の通知', extMachine, resolveMailAddress(extMachine)),
+      buildMailSubject('期間変更申請の通知', extMachine, resolveMailAddress(extMachine), _group.count),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より期間変更の申請がありました。\n\n` +
       `■対象予約\n` +
       ` 予約ID  : ${state.actionTitleId}\n` +
       ` 筐体名  : ${extMachine}\n` +
+      _group.note +
       (curStart || curEnd ? ` 現在の期間: ${curStart} 〜 ${curEnd}\n` : '') +
       `\n■申請された貸出期間\n` +
       ` 変更後期間: ${startVal || curStart} 〜 ${endVal}\n` +
@@ -2199,14 +2274,17 @@ document.getElementById('cancel-ok').addEventListener('click', async () => {
       });
     }
     // ② PMOへ利用取消依頼通知メール送信（本文に取消理由を必ず記載）
+    // 改修: 複数筐体一括登録の連動予約があれば件名・本文に付記する
+    const _group = getGroupMailInfo(cancelRes);
     await sendMail(
       mailConfig.pmoTo,
-      buildMailSubject('利用取消依頼の通知', cancelMachine, resolveMailAddress(cancelMachine)),
+      buildMailSubject('利用取消依頼の通知', cancelMachine, resolveMailAddress(cancelMachine), _group.count),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より利用取消の依頼がありました。\n\n` +
       `■対象予約\n` +
       ` 予約ID  : ${state.actionTitleId}\n` +
       ` 筐体名  : ${cancelMachine}\n` +
+      _group.note +
       (cancelRes ? ` 現在の貸出期間: ${cancelRes.start} 〜 ${cancelRes.end}\n` : '') +
       `\n■取消理由\n` +
       ` ${cancelReason}\n` +
@@ -2237,16 +2315,18 @@ document.getElementById('info-report-btn').addEventListener('click', async () =>
   showBusy('利用終了報告を送信中...');  // 改修: 処理中オーバーレイ表示
   try {
     // 改修(メール文面): 提案資料⑦に合わせて件名・本文を更新
+    // 改修: 複数筐体一括登録の連動予約があれば件名・本文に付記する
+    const _group = getGroupMailInfo(reportRes);
     await sendMail(
       mailConfig.pmoTo,
-      buildMailSubject('利用終了報告', reportRes?.machine || '', resolveMailAddress(reportRes?.machine)),
+      buildMailSubject('利用終了報告', reportRes?.machine || '', resolveMailAddress(reportRes?.machine), _group.count),
       `PMO ご担当者 様\n\n` +
       `下記予約について、使用者より利用終了の報告がありました。\n` +
       `HILSの初期状態復帰の確認をお願いします。\n\n` +
       `■対象予約\n` +
       ` 予約ID  : ${state.actionTitleId}\n` +
       (reportRes
-        ? ` 筐体名  : ${reportRes.machine}\n 貸出期間 : ${reportRes.start} 〜 ${reportRes.end}\n`
+        ? ` 筐体名  : ${reportRes.machine}\n 貸出期間 : ${reportRes.start} 〜 ${reportRes.end}\n` + _group.note
         : '') +
       mailSignature(),
       mailConfig.pmoCc
@@ -2299,15 +2379,20 @@ document.getElementById('accept-change-btn').addEventListener('click', async () 
     await patchActionAccept(state.actionItemId, '期間変更');
     // ② 改修(メール文面): 提案資料②に合わせて件名・本文を更新
     const chgMachine = state.actionHilsRes?.machine || '';
+    // 改修: 複数筐体一括登録の連動予約があれば件名・本文に付記する
+    // （state.actionHilsResはSPの生データ由来の簡易オブジェクトでgroupIdを持たないため、
+    //   getGroupMailInfo内部でfindFullReservationにより完全なレコードを引き直す）
+    const _group = getGroupMailInfo(state.actionHilsRes);
     await sendMail(
       mailConfig.pmoTo,
       // 改修: 件名を「予約内容変更」から「日程変更」に変更（実質は使用期間の変更依頼のため）
-      buildMailSubject('日程変更のご依頼', chgMachine, resolveMailAddress(chgMachine)),
+      buildMailSubject('日程変更のご依頼', chgMachine, resolveMailAddress(chgMachine), _group.count),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より使用期間の変更依頼がありました。\n\n` +
       `■対象予約\n` +
       ` 予約ID  : ${state.actionTitleId}\n` +
       ` 筐体名  : ${chgMachine}\n` +
+      _group.note +
       (state.actionHilsRes
         ? ` 現在の期間: ${state.actionHilsRes.start} 〜 ${state.actionHilsRes.end}\n`
         : '') +
@@ -2339,14 +2424,17 @@ document.getElementById('accept-ok-btn').addEventListener('click', async () => {
     await patchActionAccept(acceptId, '承知');
     // ② PMOへ承知メール送信（改修(メール文面): 提案資料③に合わせて件名・本文を更新）
     const okMachine = state.actionHilsRes?.machine || '';
+    // 改修: 複数筐体一括登録の連動予約があれば件名・本文に付記する
+    const _group = getGroupMailInfo(state.actionHilsRes);
     await sendMail(
       mailConfig.pmoTo,
-      buildMailSubject('使用承知の通知', okMachine, resolveMailAddress(okMachine)),
+      buildMailSubject('使用承知の通知', okMachine, resolveMailAddress(okMachine), _group.count),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より使用を「承知」する旨の回答がありました。\n\n` +
       `■対象予約\n` +
       ` 予約ID : ${state.actionTitleId}\n` +
       ` 筐体名 : ${okMachine}\n` +
+      _group.note +
       (state.actionHilsRes
         ? ` 使用期間: ${state.actionHilsRes.start} 〜 ${state.actionHilsRes.end}\n`
         : '') +
@@ -2396,15 +2484,18 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
     }
     // ④ PMOへ辞退メール送信（改修(メール文面): 提案資料④に合わせて件名・本文を更新）
     const rejMachine = state.actionHilsRes?.machine || '';
+    // 改修: 複数筐体一括登録の連動予約があれば件名・本文に付記する
+    const _group = getGroupMailInfo(state.actionHilsRes);
     await sendMail(
       mailConfig.pmoTo,
-      buildMailSubject('使用辞退の通知', rejMachine, resolveMailAddress(rejMachine)),
+      buildMailSubject('使用辞退の通知', rejMachine, resolveMailAddress(rejMachine), _group.count),
       `PMO ご担当者 様\n\n` +
       `下記予約について、申請者より使用を「辞退」する旨の回答がありました。\n` +
       `本予約は予約管理表から削除されます。\n\n` +
       `■対象予約\n` +
       ` 予約ID : ${state.actionTitleId}\n` +
       ` 筐体名 : ${rejMachine}\n` +
+      _group.note +
       (state.actionHilsRes
         ? ` 使用期間: ${state.actionHilsRes.start} 〜 ${state.actionHilsRes.end}\n`
         : '') +
@@ -2428,31 +2519,54 @@ function deleteReservation(resId) {
     alertForeignCaseReservation(state.reservations[resId]);
     return false;
   }
+  // 改修: 複数筐体一括登録の連動予約（同一groupId）があれば、確認前に対象を洗い出し
+  // confirm文言に件数を明示する。連動予約はresIdと一緒に削除する
+  const target      = state.reservations[resId];
+  const groupId     = target ? target.groupId : null;
+  const siblingIds  = groupId != null
+    ? state.reservations.map((_, i) => i).filter(i => i !== resId && state.reservations[i].groupId === groupId)
+    : [];
+  const confirmMsg  = siblingIds.length > 0
+    ? `この予約を削除しますか？（連動する${siblingIds.length}件の予約も削除されます）`
+    : 'この予約を削除しますか？';
   // 改修(マージ): 成否を返すよう変更（ダイアログ側で成功時のみ閉じるため）
-  if (!confirm('この予約を削除しますか？')) return false;
-  // 改修(SP連携マージ): 削除前にspId/設備/日付を退避してSP削除・CSV行削除を非同期実行（楽観更新）
-  const spId    = state.reservations[resId] ? state.reservations[resId].spId     : null;
-  // 改修(起動連携): CSV削除キーとなる設備/開始日/終了日を削除前に退避
-  const delMachine = state.reservations[resId] ? state.reservations[resId].machine : null;
-  const delStart   = state.reservations[resId] ? state.reservations[resId].start   : null;
-  const delEnd     = state.reservations[resId] ? state.reservations[resId].end     : null;
-  // 改修(状態分離): 通常/非通常のどちらのCSVから削除すべきか判定するため、削除前に状態を退避
-  const delStatus  = state.reservations[resId] ? (state.reservations[resId].status || 'normal') : 'normal';
-  state.reservations.splice(resId, 1);
+  if (!confirm(confirmMsg)) return false;
+
+  // 改修: 削除対象（本体＋連動する兄弟）をまとめて配列化し、spId/設備/日付/状態をspliceの前に退避する
+  const targetIds = [resId, ...siblingIds];
+  const deletions = targetIds.map(i => {
+    const r = state.reservations[i];
+    return {
+      spId:    r ? r.spId    : null,
+      machine: r ? r.machine : null,
+      start:   r ? r.start   : null,
+      end:     r ? r.end     : null,
+      status:  r ? (r.status || 'normal') : 'normal',
+    };
+  });
+  // 改修: インデックスの大きい順にspliceして後続要素の添字ズレを防ぐ
+  [...targetIds].sort((a, b) => b - a).forEach(i => state.reservations.splice(i, 1));
   saveReservations(state.reservations);
   clearSelection();
   renderCalendar();
-  if (delStatus === 'normal') {
-    if (spId != null) apiDelete(spId);
-    // 改修(起動連携): SPアイテム削除に合わせてCSVの該当行も削除する
-    if (delMachine && delStart && delEnd) apiDeleteLegendColor(delMachine, delStart, delEnd);
-  } else {
-    // 改修(状態分離): 予備日/設備故障/休日はSharePoint未連携のため、状態リストCSVの該当行のみ削除する
-    if (delMachine && delStart && delEnd) apiDeleteStatus(delMachine, delStart, delEnd);
-  }
-  // 改修: 1案件=1予約ガード。アクション連携中の予約を削除したら再登録可能にする。
-  // ただしステータスが 90/91（否認・取り下げ）の場合は管理状態を維持しステータス変更しない
-  if (state.actionItemId && spId != null && spId === state.actionResSpId) {
+
+  // 改修: 本体・連動予約それぞれのSP/CSV削除を実行
+  deletions.forEach(({ spId: dSpId, machine: dMachine, start: dStart, end: dEnd, status: dStatus }) => {
+    if (dStatus === 'normal') {
+      if (dSpId != null) apiDelete(dSpId);
+      // 改修(起動連携): SPアイテム削除に合わせてCSVの該当行も削除する
+      if (dMachine && dStart && dEnd) apiDeleteLegendColor(dMachine, dStart, dEnd);
+    } else {
+      // 改修(状態分離): 予備日/設備故障/休日はSharePoint未連携のため、状態リストCSVの該当行のみ削除する
+      if (dMachine && dStart && dEnd) apiDeleteStatus(dMachine, dStart, dEnd);
+    }
+  });
+
+  // 改修: 1案件=1予約ガード。削除対象（本体または連動予約のいずれか）に案件連携中のspIdが
+  // 含まれていれば再登録可能にする。ただしステータスが 90/91（否認・取り下げ）の場合は
+  // 管理状態を維持しステータス変更しない
+  const deletedSpIds = deletions.map(d => d.spId);
+  if (state.actionItemId && state.actionResSpId != null && deletedSpIds.includes(state.actionResSpId)) {
     if (!KEEP_STATUS_NUMS.includes(actionStatusNum(state.actionStatus))) {
       // 改修: ステータス遷移タイミングを「利用取消依頼申請時」から「事務局が予約を削除した時」へ変更。
       // 取消理由（事務局アクションリストの取消理由列）の有無で、取消依頼由来の削除か通常削除かを判定する。
@@ -2928,6 +3042,11 @@ function showDialog(title, data, mode, resId = null) {
     closeFormPane();
     if (mode === 'register') {
       resData._id = genLocalId();
+      // 改修: 複数筐体一括登録の場合、兄弟予約と共有するグループIDを発行する
+      // （連動編集・削除・メールの複数筐体表示は、このgroupIdを軸に予約同士を辿る）
+      if (state.multiMachines && state.multiMachines.length > 1) {
+        resData.groupId = genLocalId();
+      }
       state.reservations.push(resData);
       // 改修(マージ): 登録直後は選択枠(緑)を解除し、登録した予約を赤枠選択状態にする
       state.selectedCells = new Set();
@@ -3051,14 +3170,18 @@ function showDialog(title, data, mode, resId = null) {
           }
           showBusy('登録処理中...');  // 改修: 処理中オーバーレイ表示
           try {
+            // 改修: 複数筐体一括登録の連動予約があれば件名・本文に付記する
+            // （resDataはこの時点でgroupId設定済み・兄弟は既にstate.reservationsへ登録済み）
+            const _group = getGroupMailInfo(resData);
             await sendMail(
               applicantEmail,
-              buildMailSubject('使用確定のお知らせ（承知・辞退のお願い）', resData.machine, resData.address),
+              buildMailSubject('使用確定のお知らせ（承知・辞退のお願い）', resData.machine, resData.address, _group.count),
               `${state.autoFill?.applicant || ''} 様\n\n` +
               `ご申請いただいた統合HILSの使用日程が確定しましたのでお知らせします。\n\n` +
               `■予約情報\n` +
               ` 予約ID : ${state.actionTitleId}\n` +
               ` 筐体名 : ${resData.machine}\n` +
+              _group.note +
               ` 使用期間: ${resData.start} 〜 ${resData.end}\n\n` +
               `下記ページより内容をご確認のうえ、「承知」または「辞退」の操作をお願いします。\n` +
               `使用期間の変更をご希望の場合も、下記ページより変更依頼が可能です。\n\n` +
@@ -3086,56 +3209,70 @@ function showDialog(title, data, mode, resId = null) {
       saveReservations(state.reservations);
       renderCalendar();
       updateInfoPanel();
-      const wasNormal = prevStatus === 'normal';
-      const isNormal  = resData.status === 'normal';
-      if (isNormal) {
-        // 改修(SP連携マージ): spIdがあれば更新、なければ新規作成してspIdを保存
-        if (prevSpId != null) {
-          await apiUpdate(prevSpId, state.reservations[resId]);
-        } else {
-          const newSpId = await apiCreate(state.reservations[resId]);
-          if (newSpId != null) {
-            state.reservations[resId].spId = newSpId;
-            saveReservations(state.reservations);
+      // 改修: SP/CSV同期処理を関数化（syncReservationEdit）。連動予約（兄弟）にも同じ処理を使い回す
+      await syncReservationEdit(resId, prevSpId, prevStatus, prevMachine, prevStart, prevEnd);
+      // 改修(第13回): 更新後に事務局アクションリストのステータスを「1.仮申請受領」へ戻す W-12
+      // （案件連携は主筐体のみに適用する既存方針のため、連動予約(兄弟)には適用しない）
+      if (resData.status === 'normal' && state.actionItemId) {
+        (async () => {
+          try {
+            const r = await fetch(`/api/action-item/${state.actionItemId}/status`, {
+              method:  'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ status: '1.仮申請受領' }),
+            });
+            // 改修: res.okを検査してエラーを画面に表示
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              console.error('ステータス更新失敗:', err);
+              setStatus(`ステータス更新に失敗しました: ${err.error || r.status}`, '#ef4444');
+            } else {
+              // 改修: 1案件=1予約ガード用に現在ステータスを追従
+              state.actionStatus = '1.仮申請受領';
+            }
+          } catch (e) {
+            console.error('更新後アクションリスト更新エラー:', e);
+          }
+        })();
+      }
+
+      // 改修: 複数筐体一括登録の連動予約（兄弟）へ、日程・分類・借用者・申請者・備考・状態を自動反映する。
+      // 筐体名・アドレス・担当者・検証完了日★（marks）は筐体固有のため連動対象外
+      const groupId = state.reservations[resId].groupId;
+      if (groupId != null) {
+        const siblingIds = state.reservations
+          .map((_, i) => i)
+          .filter(i => i !== resId && state.reservations[i].groupId === groupId);
+        if (siblingIds.length > 0) {
+          showBusy('連動予約を更新中...');
+          try {
+            for (const sId of siblingIds) {
+              const sPrevSpId    = state.reservations[sId].spId;
+              const sPrevStatus  = state.reservations[sId].status  || 'normal';
+              const sPrevMachine = state.reservations[sId].machine;
+              const sPrevStart   = state.reservations[sId].start;
+              const sPrevEnd     = state.reservations[sId].end;
+              state.reservations[sId] = {
+                ...state.reservations[sId],
+                start:     resData.start,
+                end:       resData.end,
+                legendId:  resData.legendId,
+                color:     resData.color,
+                user:      resData.user,
+                applicant: resData.applicant,
+                remark:    resData.remark,
+                status:    resData.status,
+              };
+              saveReservations(state.reservations);
+              await syncReservationEdit(sId, sPrevSpId, sPrevStatus, sPrevMachine, sPrevStart, sPrevEnd);
+            }
+            renderCalendar();
+            updateInfoPanel();
+            setStatus(`連動する${siblingIds.length}件の予約も更新しました`);
+          } finally {
+            hideBusy();
           }
         }
-        // 改修(起動連携): 凡例色リストCSVを更新（同一 machine+start+end で上書き）
-        await apiAppendLegendColor(state.reservations[resId]);
-        // 改修(状態分離): 非正規→正規への変更時は、旧・状態リストCSVの行を削除する
-        if (!wasNormal) await apiDeleteStatus(prevMachine, prevStart, prevEnd);
-        // 改修(第13回): 更新後に事務局アクションリストのステータスを「1.仮申請受領」へ戻す W-12
-        if (state.actionItemId) {
-          (async () => {
-            try {
-              const r = await fetch(`/api/action-item/${state.actionItemId}/status`, {
-                method:  'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ status: '1.仮申請受領' }),
-              });
-              // 改修: res.okを検査してエラーを画面に表示
-              if (!r.ok) {
-                const err = await r.json().catch(() => ({}));
-                console.error('ステータス更新失敗:', err);
-                setStatus(`ステータス更新に失敗しました: ${err.error || r.status}`, '#ef4444');
-              } else {
-                // 改修: 1案件=1予約ガード用に現在ステータスを追従
-                state.actionStatus = '1.仮申請受領';
-              }
-            } catch (e) {
-              console.error('更新後アクションリスト更新エラー:', e);
-            }
-          })();
-        }
-      } else {
-        // 改修(状態分離): 予備日/設備故障/休日へ変更（または非正規のまま編集）: SPは更新せず状態リストCSVへ記録
-        if (prevSpId != null) {
-          // 正規→非正規への変更: 既存のSP行・凡例色リストCSV行を削除しspIdを外す
-          await apiDelete(prevSpId);
-          await apiDeleteLegendColor(prevMachine, prevStart, prevEnd);
-          state.reservations[resId].spId = null;
-          saveReservations(state.reservations);
-        }
-        await apiAppendStatus(state.reservations[resId]);
       }
     }
   };
@@ -3179,9 +3316,11 @@ function showDialog(title, data, mode, resId = null) {
         setStatus('申請者メールアドレスが見つかりませんでした', 'red');
         return;
       }
+      // 改修: 複数筐体一括登録の連動予約があれば件名・本文に付記する
+      const _group = getGroupMailInfo(terminateRes);
       await sendMail(
         applicantEmail,
-        buildMailSubject('HILS初期状態復帰のご確認', terminateRes?.machine || '', terminateRes?.address || resolveMailAddress(terminateRes?.machine)),
+        buildMailSubject('HILS初期状態復帰のご確認', terminateRes?.machine || '', terminateRes?.address || resolveMailAddress(terminateRes?.machine), _group.count),
         `${state.autoFill?.applicant || ''} 様\n\n` +
         `下記予約の利用終了処理が完了しました。\n` +
         `HILSが初期状態へ復帰していることをご確認ください。\n\n` +
@@ -3193,7 +3332,7 @@ function showDialog(title, data, mode, resId = null) {
         `■対象予約\n` +
         ` 予約ID : ${state.actionTitleId}\n` +
         (terminateRes
-          ? ` 筐体名 : ${terminateRes.machine}\n 使用期間: ${terminateRes.start} 〜 ${terminateRes.end}\n`
+          ? ` 筐体名 : ${terminateRes.machine}\n 使用期間: ${terminateRes.start} 〜 ${terminateRes.end}\n` + _group.note
           : '') +
         mailSignature(),
         mailConfig.userCc
@@ -3393,6 +3532,9 @@ async function init() {
         // state.reservationsに読み込まれた時点でactionListIdが常にundefinedになり、
         // isForeignCaseReservationによるガードが常に無効化されてしまっていた。
         actionListId: res.actionListId,
+        // 改修: 複数筐体一括登録の連動グループID。SP側に対応列は無いため、
+        // localStorageのリッチ項目（ex、spIdキーで復元）からのみ復元する
+        groupId: ex.groupId != null ? ex.groupId : null,
       };
     });
     // 改修(起動連携): SP予約のdistinct設備名を南ルームの筐体一覧に反映（行を動的生成）
