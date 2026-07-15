@@ -88,24 +88,41 @@ const LEGEND_SEED = [
   { id: 'leg8', name: '日程仮置き',             color: '#FFFF00' },
 ];
 
-const LEGEND_STORAGE_KEY  = 'hils_legend_v1';
 const RES_STORAGE_KEY     = 'hils_reservations_v1';
 // 改修(筐体マスタ共通化): 筐体マスタ（machines/spares/assignees）はサーバー側CSVへ移行したため
 // localStorageキー（旧: hils_machines_v1 / hils_spares_v1 / hils_assignees_v1）は廃止
+// 改修(凡例共通化): 凡例（_legend）もサーバー側CSVへ移行したため、localStorageキー（旧: hils_legend_v1）は廃止
 const ASSIGNEE_VISIBLE_KEY  = 'hils_assignee_visible_v1';  // 改修: 担当者列の表示/非表示フラグ（全ルーム共通・画面表示設定のためlocalStorageのまま）
 
 // ────────────────────────────────────────────
-// 凡例ストア（localStorage）
+// 改修(凡例共通化): 凡例ストア（サーバー側CSV、全ルーム共通の単一ファイル）
+// 旧実装はlocalStorageに保存していたためPC毎に内容が独立していた。
+// /api/legend 経由でサーバーPC上のCSVへ保存し、全PC共通の情報にする。
 // ────────────────────────────────────────────
-function loadLegend() {
+
+// 凡例マスタをサーバーCSVから取得する。通信失敗時はLEGEND_SEED（既定値）を返す
+async function fetchLegend() {
   try {
-    const raw = localStorage.getItem(LEGEND_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (_) {}
-  return LEGEND_SEED.map(l => ({ ...l }));
+    const res = await fetch('/api/legend');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data) && data.length ? data : LEGEND_SEED.map(l => ({ ...l }));
+  } catch (e) {
+    console.error('凡例マスタCSV取得失敗:', e);
+    return LEGEND_SEED.map(l => ({ ...l }));
+  }
 }
-function saveLegend(legend) {
-  localStorage.setItem(LEGEND_STORAGE_KEY, JSON.stringify(legend));
+// 凡例マスタを全置換でサーバーへ保存する（fire-and-forget、失敗はログのみ）
+async function saveLegend(legend) {
+  try {
+    await fetch('/api/legend', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(legend),
+    });
+  } catch (e) {
+    console.error('凡例マスタCSV保存失敗:', e);
+  }
 }
 function getLegendMap(legend) {
   const m = {};
@@ -130,7 +147,8 @@ function pickUnusedPaletteColor() {
   return LEGEND_PALETTE.find(hex => !used.has(hex.toLowerCase())) || null;
 }
 
-let _legend = loadLegend();
+// 改修(凡例共通化): 初期値は空配列。init()内で fetchLegend() によりサーバーCSVから非同期取得する
+let _legend = [];
 
 // ────────────────────────────────────────────
 // 改修(筐体マスタ共通化): 筐体マスタストア（サーバー側CSV、ルーム別ファイル）
@@ -3186,6 +3204,9 @@ async function init() {
   await loadRoomMaster();
   syncRoomViews();
   document.getElementById('room-select').value = state.currentRoom;
+
+  // 改修(凡例共通化): 凡例マスタCSVをサーバーから取得する
+  _legend = await fetchLegend();
 
   // 改修(起動連携): SPから予約取得後、凡例色リストCSVからリッチ項目を復元して反映
   setStatus('データを読み込み中...', 'orange');

@@ -33,6 +33,10 @@ const MACHINE_CSV_DIR   = process.env.MACHINE_CSV_DIR || path.join(__dirname, '.
 // ルーム名 → CSVファイル名の対応表（許可ルームをここで固定し、パストラバーサルを防止）
 const MACHINE_CSV_FILES = { west: '筐体一覧_west.csv', south: '筐体一覧_south.csv' };
 
+// 改修(凡例共通化): 凡例マスタCSV（全ルーム共通・単一ファイル）のパス
+// 本番ではサーバーPC上の絶対パスを LEGEND_MASTER_PATH に指定すること
+const LEGEND_MASTER_PATH = process.env.LEGEND_MASTER_PATH || path.join(__dirname, '../凡例マスタ.csv');
+
 // 改修: メール宛先/CC設定 ── 開発者が起動時にコンソールから事務局宛先(To)・各CCを入力できるようにする。
 // Node(フロント発メール)とPythonバッチ(hils_alert.py)の両方から参照するため、専用JSONファイルへ永続化する。
 const MAIL_CONFIG_PATH    = path.join(__dirname, 'mail_config.json');
@@ -517,6 +521,36 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 改修(凡例共通化): GET /api/legend — 凡例マスタCSVを配列で返す（全PC共通）
+  // CSV未作成時は既定シード（DEFAULT_LEGEND）で新規作成する
+  if (pathname === '/api/legend' && method === 'GET') {
+    try {
+      let data = parseLegendMaster();
+      if (data === null) {
+        data = DEFAULT_LEGEND.slice();
+        writeLegendMaster(data);
+      }
+      jsonOk(res, data);
+    } catch (e) {
+      console.error('GET /api/legend:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(凡例共通化): POST /api/legend — 凡例マスタCSVを配列全置換で保存（全PC共通）
+  if (pathname === '/api/legend' && method === 'POST') {
+    try {
+      const body = await readBody(req);
+      writeLegendMaster(Array.isArray(body) ? body : (body.legend || []));
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('POST /api/legend:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
   // ── 静的ファイル配信 ──
   serveStatic(req, res, pathname);
 });
@@ -782,6 +816,65 @@ function writeMachineCsv(room, data) {
   // UTF-8 BOMを先頭に付与（日本語Windowsのアプリが文字化けしないよう）
   const bom = '﻿';
   fs.writeFileSync(csvPath, bom + [headerLine, ...dataLines].join('\r\n') + '\r\n', 'utf8');
+}
+
+// ────────────────────────────────────────────
+// 改修(凡例共通化): 凡例マスタCSV ヘルパー（全ルーム共通・単一ファイル）
+// CSVスキーマ（4列）: id, name, color, order
+// 凡例定義（凡例パネルの名前＋色）を全PC共通化するため、localStorageからサーバーCSVへ移行する
+// ────────────────────────────────────────────
+
+// CSV未作成時に書き出す初期凡例（frontend/app.js の LEGEND_SEED と一致させること）
+const DEFAULT_LEGEND = [
+  { id: 'leg1', name: 'XPX（FI/EDR）',          color: '#8DB4E2' },
+  { id: 'leg2', name: 'XPX構築',                color: '#E63283' },
+  { id: 'leg3', name: 'マル特・TM',             color: '#92D050' },
+  { id: 'leg4', name: '一般募集',               color: '#00B050' },
+  { id: 'leg5', name: '事務局メンテ',           color: '#FFC000' },
+  { id: 'leg6', name: '機材の不合格（バッファ）', color: '#00B0F0' },
+  { id: 'leg7', name: 'AP2PIかつFHEV案件',       color: '#D457BF' },
+  { id: 'leg8', name: '日程仮置き',             color: '#FFFF00' },
+];
+
+// 凡例マスタCSVを読み込み [{id, name, color}] を返す
+// ファイルが存在しない場合はnullを返す（呼び出し側で初期シード投入の判断に使う）
+function parseLegendMaster() {
+  let raw;
+  try {
+    raw = fs.readFileSync(LEGEND_MASTER_PATH, 'utf8');
+  } catch (_) {
+    return null;
+  }
+  // UTF-8 BOM（U+FEFF）を除去してから分割
+  const lines = raw.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim() !== '');
+  if (lines.length < 1) return [];
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const vals = splitCsvLine(lines[i]);
+    rows.push({
+      id:    unquote(vals[0] || ''),
+      name:  unquote(vals[1] || ''),
+      color: unquote(vals[2] || ''),
+      order: parseInt(unquote(vals[3] || '0'), 10) || 0,
+    });
+  }
+  // 表示順（保存時に振った連番）で昇順ソート
+  rows.sort((a, b) => a.order - b.order);
+  return rows.filter(r => r.id).map(r => ({ id: r.id, name: r.name, color: r.color }));
+}
+
+// 凡例マスタ（[{id, name, color}]）をCSVへ全置換保存する
+function writeLegendMaster(legend) {
+  // 格納先フォルダが無ければ作成（初回起動時）
+  fs.mkdirSync(path.dirname(LEGEND_MASTER_PATH), { recursive: true });
+  const rows = Array.isArray(legend) ? legend : [];
+  const headerLine = ['id', 'name', 'color', 'order'].map(quoteVal).join(',');
+  const dataLines = rows.map((leg, idx) =>
+    [leg.id || '', leg.name || '', leg.color || '', idx].map(quoteVal).join(',')
+  );
+  // UTF-8 BOMを先頭に付与（日本語Windowsのアプリが文字化けしないよう）
+  const bom = '﻿';
+  fs.writeFileSync(LEGEND_MASTER_PATH, bom + [headerLine, ...dataLines].join('\r\n') + '\r\n', 'utf8');
 }
 
 // 改修(第13回): SP列名変換を統合HILS使用履歴リストの実内部名に差替え
