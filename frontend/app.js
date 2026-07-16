@@ -228,6 +228,8 @@ function loadAssigneeVisible() {
 function applyAssigneeVisibility(visible) {
   const tbl = document.getElementById('gantt-table');
   if (!tbl) return;
+  // 改修: 使用者モードでは担当者列自体が不要なため、指定にかかわらず常に非表示にする
+  if (!isAdmin) visible = false;
   // visible=false のとき assignee-hidden クラスを付与して列を非表示にする
   tbl.classList.toggle('assignee-hidden', !visible);
 }
@@ -244,6 +246,12 @@ function applyAddressVisibility(room) {
 // 西HILSルームでは保存済みのユーザー設定（チェックボックス）に従って表示/非表示を復元する。
 function applyAssigneeVisibilityForRoom(room) {
   const chk = document.getElementById('assignee-visible-chk');
+  // 改修: 使用者モードでは担当者列・チェックボックス自体が不要なため常に非表示・操作不可にする
+  if (!isAdmin) {
+    applyAssigneeVisibility(false);
+    if (chk) chk.disabled = true;
+    return;
+  }
   if (room === 'south') {
     applyAssigneeVisibility(false);
     if (chk) chk.disabled = true;
@@ -3185,7 +3193,9 @@ function showDialog(title, data, mode, resId = null) {
               ` 使用期間: ${resData.start} 〜 ${resData.end}\n\n` +
               `下記ページより内容をご確認のうえ、「承知」または「辞退」の操作をお願いします。\n` +
               `使用期間の変更をご希望の場合も、下記ページより変更依頼が可能です。\n\n` +
-              ` 承知・辞退ページ: ${location.origin}/?page=accept&id=${state.actionTitleId}` +
+              ` 承知・辞退ページ: ${location.origin}/?page=accept&id=${state.actionTitleId}\n\n` +
+              // 改修: 利用終了時に利用終了報告ボタンでの報告が必要な旨を追記
+              `なお、利用終了時には予約表の「利用終了報告」ボタンから事務局へご報告をお願いします。` +
               mailSignature(),
               mailConfig.userCc
             );
@@ -3325,7 +3335,7 @@ function showDialog(title, data, mode, resId = null) {
         `下記予約の利用終了処理が完了しました。\n` +
         `HILSが初期状態へ復帰していることをご確認ください。\n\n` +
         `【確認項目】\n` +
-        `・PODがIG_OFFになっていること\n` +
+        `・PODがバッテリーキャンセル状態になっていること\n` +
         `・ECUソフト／ハード構成が利用開始時の状態に戻っていること\n` +
         `・ECUリアル／ダミー設定が利用開始時の状態に戻っていること\n\n` +
         `相違があれば事務局までご連絡ください。\n\n` +
@@ -3609,6 +3619,11 @@ async function init() {
   // 南HILSルームでは担当者列を常に非表示・操作不可にする（初回renderCalendar前にクラスを確定させる）
   document.getElementById('assignee-visible-chk').checked = loadAssigneeVisible();
   applyAssigneeVisibilityForRoom(state.currentRoom);
+  // 改修: 使用者モードでは担当者列チェックボックス自体（トグルUI）も不要なため非表示にする
+  if (!isAdmin) {
+    const assigneeToggleEl = document.querySelector('.assignee-toggle');
+    if (assigneeToggleEl) assigneeToggleEl.classList.add('hidden');
+  }
 
   // 改修(第7回): 表示期間を初期化してからカレンダーを描画し、今日へ自動スクロール
   initViewRange();
@@ -3623,133 +3638,4 @@ async function init() {
 
 init();
 
-// ────────────────────────────────────────────
-// 画像保存機能（📷保存ボタン）
-// ────────────────────────────────────────────
-document.getElementById('capture-btn').addEventListener('click', saveCalendarImage);
-
-async function saveCalendarImage() {
-  const captureBtn  = document.getElementById('capture-btn');
-  const ganttTable  = document.getElementById('gantt-table');
-  const legendPanel = document.getElementById('legend-panel');
-  if (!ganttTable) return;
-
-  // 改修(可視範囲スクショ): スクロールで隠れた行・日付列を除外するため、
-  // レンダリング前に現在の可視ビューポート（スクロール位置・表示サイズ）と
-  // 固定枠（左端の筐体名/担当者列、上端の月見出し/日付ヘッダ行）のサイズを取得しておく
-  const ganttWrapper    = ganttTable.closest('.gantt-wrapper');
-  const gtHead          = document.getElementById('gantt-head');
-  const headerMachineTh = gtHead ? gtHead.querySelector('th.machine-col')  : null;
-  const headerAssigneeTh = gtHead ? gtHead.querySelector('th.assignee-col') : null;
-  const viewScrollLeft = ganttWrapper ? ganttWrapper.scrollLeft   : 0;
-  const viewScrollTop  = ganttWrapper ? ganttWrapper.scrollTop    : 0;
-  const viewWidth      = ganttWrapper ? ganttWrapper.clientWidth  : ganttTable.clientWidth;
-  const viewHeight     = ganttWrapper ? ganttWrapper.clientHeight : ganttTable.clientHeight;
-  // 固定列幅（担当者列が非表示のときはoffsetWidthが0になるため無条件加算でよい）
-  const frozenColWidth  = (headerMachineTh ? headerMachineTh.offsetWidth : 0)
-                         + (headerAssigneeTh ? headerAssigneeTh.offsetWidth : 0);
-  // 固定ヘッダ高（月見出し行＋日付ヘッダ行の合計）
-  const frozenHeadHeight = gtHead ? gtHead.getBoundingClientRect().height : 0;
-
-  captureBtn.disabled = true;
-  setStatus('画像を生成中...', 'orange');
-
-  const prevLegendOverflowY  = legendPanel ? legendPanel.style.overflowY  : '';
-  const prevLegendHeight     = legendPanel ? legendPanel.style.height     : '';
-  const prevLegendMaxHeight  = legendPanel ? legendPanel.style.maxHeight  : '';
-  // 改修: flex:1 1 40% が height:auto より優先されるため flex も一時解除
-  const prevLegendFlex       = legendPanel ? legendPanel.style.flex       : '';
-  if (legendPanel) {
-    legendPanel.style.overflowY = 'visible';
-    legendPanel.style.height    = 'auto';
-    legendPanel.style.maxHeight = 'none';
-    legendPanel.style.flex      = '0 0 auto';
-  }
-
-  try {
-    const OPT = { scale: 2, backgroundColor: '#ffffff', useCORS: true, logging: false };
-
-    // 改修(可視範囲スクショ・不具合修正): html2canvasはposition:stickyの固定列/固定ヘッダを
-    // 「スクロール後に貼り付いた画面位置」で描画してしまい、可視範囲クロップ（x=0/y=0起点の前提）と
-    // 座標がズレて筐体名列・担当者列が撮影結果から欠落する不具合があった。撮影の瞬間だけ
-    // sticky解除クラスを付与し、テーブル本来の静的位置で描画させることで解消する（style.css参照）
-    ganttTable.classList.add('capturing');
-    const tableCanvas = await html2canvas(ganttTable, OPT);
-    // 改修(可視範囲スクショ): 凡例は従来通り全件展開して撮影する（ユーザー確定事項）
-    const legendCanvas = legendPanel
-      ? await html2canvas(legendPanel, OPT)
-      : null;
-
-    // 改修(可視範囲スクショ): tableCanvas（予約表全体）から「画面に映っている範囲」だけを
-    // 固定枠（左端の筐体名/担当者列・上端の月見出し/日付ヘッダ行）を保持したまま切り出す
-    const scale     = OPT.scale;
-    const fullW     = tableCanvas.width;
-    const fullH     = tableCanvas.height;
-    const colWPx    = Math.round(frozenColWidth   * scale);
-    const headHPx   = Math.round(frozenHeadHeight * scale);
-    const scrollLPx = Math.round(viewScrollLeft    * scale);
-    const scrollTPx = Math.round(viewScrollTop     * scale);
-    // ビューポート幅・高さは表全体の実サイズでクランプする（表がビューポートより小さい場合の対策）
-    const viewWPx   = Math.min(Math.round(viewWidth  * scale), fullW);
-    const viewHPx   = Math.min(Math.round(viewHeight * scale), fullH);
-    const bodyWPx   = Math.max(0, Math.min(viewWPx - colWPx,  fullW - colWPx  - scrollLPx));
-    const bodyHPx   = Math.max(0, Math.min(viewHPx - headHPx, fullH - headHPx - scrollTPx));
-
-    const viewCanvas = document.createElement('canvas');
-    viewCanvas.width  = viewWPx;
-    viewCanvas.height = viewHPx;
-    const vctx = viewCanvas.getContext('2d');
-    vctx.fillStyle = '#ffffff';
-    vctx.fillRect(0, 0, viewWPx, viewHPx);
-    // 左上コーナー（筐体名/担当者ヘッダ×月見出し/日付ヘッダの交差部分）
-    vctx.drawImage(tableCanvas, 0, 0, colWPx, headHPx, 0, 0, colWPx, headHPx);
-    // 上ヘッダ（スクロールで隠れていない可視日付範囲）
-    vctx.drawImage(tableCanvas, colWPx + scrollLPx, 0, bodyWPx, headHPx, colWPx, 0, bodyWPx, headHPx);
-    // 左固定列（スクロールで隠れていない可視行範囲）
-    vctx.drawImage(tableCanvas, 0, headHPx + scrollTPx, colWPx, bodyHPx, 0, headHPx, colWPx, bodyHPx);
-    // 本体（可視範囲のみ）
-    vctx.drawImage(tableCanvas, colWPx + scrollLPx, headHPx + scrollTPx, bodyWPx, bodyHPx, colWPx, headHPx, bodyWPx, bodyHPx);
-
-    const totalW = viewCanvas.width + (legendCanvas ? legendCanvas.width : 0);
-    const totalH = Math.max(viewCanvas.height, legendCanvas ? legendCanvas.height : 0);
-    const merged = document.createElement('canvas');
-    merged.width  = totalW;
-    merged.height = totalH;
-    const ctx = merged.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, totalW, totalH);
-    ctx.drawImage(viewCanvas, 0, 0);
-    if (legendCanvas) ctx.drawImage(legendCanvas, viewCanvas.width, 0);
-
-    const now = new Date();
-    const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-    const roomLabel = state.currentRoom === 'west' ? '西HILS' : '南HILS';
-    const filename = `予約表_${roomLabel}_${ymd}.png`;
-
-    merged.toBlob(blob => {
-      const url = URL.createObjectURL(blob);
-      const a   = document.createElement('a');
-      a.href     = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
-      setStatus(`保存しました: ${filename}`, '#15803d');
-      setTimeout(() => setStatus(''), 3000);
-    }, 'image/png');
-
-  } catch (err) {
-    console.error('画像保存エラー:', err);
-    setStatus('画像の保存に失敗しました', '#e05252');
-  } finally {
-    // 改修(可視範囲スクショ・不具合修正): 撮影用のsticky解除クラスを復元
-    ganttTable.classList.remove('capturing');
-    if (legendPanel) {
-      legendPanel.style.overflowY = prevLegendOverflowY;
-      legendPanel.style.height    = prevLegendHeight;
-      legendPanel.style.maxHeight = prevLegendMaxHeight;
-      // 改修: flex を元の値（空文字＝CSS定義に戻す）に復元
-      legendPanel.style.flex      = prevLegendFlex;
-    }
-    captureBtn.disabled = false;
-  }
-}
+// 改修: スクショ機能（📷保存ボタン・saveCalendarImage）は削除

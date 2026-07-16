@@ -93,9 +93,7 @@ body {
 /* 改修(マージ): 予約削除ボタン（編集ダイアログのフッター左側で使用） */
 .btn-delete       { background: #dc2626; color: #fff; height: 26px; font-size: 10px; }
 .btn-delete:hover { background: #b91c1c; }
-/* 改修: 📷保存ボタン */
-.btn-capture      { background: #7c3aed; color: #fff; }
-.btn-capture:hover { background: #6d28d9; }
+/* 改修: 📷保存ボタン（スクショ機能削除に伴いCSSも削除） */
 /* 改修(第6回): 延長申請ボタン */
 .btn-extend       { background: #0891b2; color: #fff; height: 26px; font-size: 10px; }
 .btn-extend:hover { background: #0e7490; }
@@ -288,22 +286,7 @@ body {
 .gantt-table.assignee-hidden th.assignee-col,
 .gantt-table.assignee-hidden td.assignee-col { visibility: collapse; }
 
-/* 改修(可視範囲スクショ・不具合修正): 撮影中のみsticky解除。
-   html2canvasはstickyを「貼り付いた画面位置」で描画するため、スクロールした状態で撮影すると
-   固定列/固定ヘッダがキャンバス内の想定位置（x=0/y=0起点）からズレて可視範囲クロップに乗らず、
-   撮影結果から欠落してしまう。キャプチャ直前だけpositionをstaticに戻し、
-   テーブル本来の静的位置（スクロール前と同じ座標）で描画させることでこれを解消する。
-   対象はsticky指定のある4セレクタのみに限定する（他の予約セルの位置基準に影響させないため） */
-.gantt-table.capturing th.machine-col,
-.gantt-table.capturing td.machine-col,
-.gantt-table.capturing th.address-col,
-.gantt-table.capturing td.address-col,
-.gantt-table.capturing th.assignee-col,
-.gantt-table.capturing td.assignee-col,
-.gantt-table.capturing th.month-col,
-.gantt-table.capturing th.date-col {
-  position: static !important;
-}
+/* 改修: 撮影用sticky解除ルール（スクショ機能削除に伴い削除） */
 
 /* 改修: 担当者列トグルのラベルスタイル */
 .assignee-toggle {
@@ -418,11 +401,17 @@ body {
   height: calc(100% - 2px);
   display: flex;
   align-items: center;
-  font: 10px 'Meiryo UI', sans-serif;
+  /* 改修: 予約表テキストの視認性向上のため太字＋12pxに変更（セルからのはみ出しは行高30pxに収まるため発生しない） */
+  font: bold 12px 'Meiryo UI', sans-serif;
   color: #1e293b;
   white-space: nowrap;
   pointer-events: none;
   z-index: 1;
+  /* 改修: 凡例色（背景）が暗い場合でも文字が読めるよう白縁取りを付与。白セル上では目立たず従来と同一表示 */
+  text-shadow:
+    -1px -1px 0 #fff, 1px -1px 0 #fff,
+    -1px  1px 0 #fff, 1px  1px 0 #fff,
+    0 0 2px #fff;
 }
 
 /* 改修(第8回): 検証完了★マーカー（res-label内に絶対配置・left はJS側で設定）
@@ -433,10 +422,16 @@ body {
   height: 100%;
   display: flex;
   align-items: center;
-  font: bold 10px 'Meiryo UI', sans-serif;
+  /* 改修: 予約表テキストの視認性向上のため12pxに変更（既存の太字は維持） */
+  font: bold 12px 'Meiryo UI', sans-serif;
   color: #1e293b;      /* ラベルと同じ黒系 */
   white-space: nowrap;
   pointer-events: none;
+  /* 改修: 凡例色（背景）が暗い場合でも文字が読めるよう白縁取りを付与 */
+  text-shadow:
+    -1px -1px 0 #fff, 1px -1px 0 #fff,
+    -1px  1px 0 #fff, 1px  1px 0 #fff,
+    0 0 2px #fff;
 }
 
 /* 備考（予約バー終了セル内の右端に表示。left:100%→right:3px に変更して飛び出しを解消） */
@@ -448,11 +443,17 @@ body {
   height: calc(100% - 2px);
   display: flex;
   align-items: center;
-  font: 10px 'Meiryo UI', sans-serif;
+  /* 改修: 予約表テキストの視認性向上のため太字＋12pxに変更 */
+  font: bold 12px 'Meiryo UI', sans-serif;
   color: #1e293b;
   white-space: nowrap;
   pointer-events: none;
   z-index: 1;
+  /* 改修: 凡例色（背景）が暗い場合でも文字が読めるよう白縁取りを付与 */
+  text-shadow:
+    -1px -1px 0 #fff, 1px -1px 0 #fff,
+    -1px  1px 0 #fff, 1px  1px 0 #fff,
+    0 0 2px #fff;
 }
 
 /* 環境名インライン編集用入力フィールド（行ヘッダーダブルクリック時に表示） */

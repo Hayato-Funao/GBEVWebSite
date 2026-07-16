@@ -11,10 +11,9 @@
 
   <!-- トップバー -->
   <header class="topbar">
+    <!-- 改修: フォーム・申請画面タブは骨組み（未実装）のため削除。ビューのみ残す -->
     <nav class="nav-tabs">
-      <button class="nav-btn left-tab"  data-page="form">フォーム</button>
       <button class="nav-btn mid-tab active" data-page="view">ビュー</button>
-      <button class="nav-btn right-tab" data-page="request">申請画面</button>
     </nav>
     <div class="status-area">
       <span id="status-msg" class="status-msg hidden"></span>
@@ -39,9 +38,8 @@
         <button id="next-btn"     class="btn btn-nav">次月 ▶</button>
         <button id="today-btn"    class="btn btn-today">今月</button>
         <button id="register-btn" class="btn btn-register">＋ 登録</button>
-        <!-- 改修: 予約表を画像として保存するボタン（GUI版の📷保存機能に相当） -->
-        <button id="capture-btn"  class="btn btn-capture">📷 保存</button>
-        <!-- 改修(第4回): 西/南HILSルーム切替プルダウン（保存ボタンの右隣） -->
+        <!-- 改修: スクショ機能（📷保存ボタン）は削除 -->
+        <!-- 改修(第4回): 西/南HILSルーム切替プルダウン -->
         <!-- 改修: 設置場所（61号棟3F）をルーム名に併記 -->
         <select id="room-select" class="room-select">
           <option value="west">西HILSルーム（61号棟3F）</option>
@@ -140,15 +138,7 @@
       </div>
     </div>
 
-    <!-- フォームページ（骨組み） -->
-    <div id="page-form" class="page">
-      <div class="placeholder">【フォーム】開発中</div>
-    </div>
-
-    <!-- 申請画面（骨組み） -->
-    <div id="page-request" class="page">
-      <div class="placeholder">【申請画面】開発中</div>
-    </div>
+    <!-- 改修: フォームページ・申請画面（骨組みのみで未実装）は削除 -->
 
     <!-- 承知/辞退ページ（専用URL: ?page=accept で起動）使用確定通知メールのリンクから直接開く独立ページ -->
     <div id="page-accept" class="page accept-page">
@@ -191,9 +181,9 @@
         <!-- 承知ブロック -->
         <div class="accept-card">
           <h3 class="accept-card-title">承知する</h3>
-          <!-- 改修: 利用終了時の対応事項（終了メール返信・初期状態復帰確認）を承知前に周知 -->
+          <!-- 改修: 利用終了時の対応事項（利用終了報告ボタン押下・初期状態復帰確認）を承知前に周知 -->
           <p class="accept-note accept-warning">
-            利用終了時には、使用者が終了メールに返信してください。<br>
+            利用終了時には、使用者が利用終了報告ボタンを押下して、事務局に報告してください。<br>
             ※HILSの初期状態復帰が確認できない場合、処理依頼、または次回以降の貸出しを禁止することがあります。
           </p>
           <div class="form-row">
@@ -233,8 +223,7 @@
   </div>
 </div>
 
-<!-- 改修: html2canvasをローカル同梱（オフライン・社内網でも動作するよう） -->
-<script src="html2canvas.min.js"></script>
+<!-- 改修: スクショ機能削除に伴いhtml2canvas読込を削除 -->
 <script src="app.js"></script>
 </body>
 </html>
