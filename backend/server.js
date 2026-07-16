@@ -921,7 +921,9 @@ function normalizeActionItem(item) {
     category:    item['OData__x5206__x985e_']                                                       || '',  // 分類
     applicant:   item['OData__x7533__x8acb__x8005__x540d_']                                         || '',  // 申請者名
     email:       item['OData__x7533__x8acb__x8005__x30e1__x30'] || '',  // 申請者メールアドレス（SP内部名32文字截断）
-    machineType: item['OData__x6a5f__x7a2e__x547c__x79f0_']                                         || '',  // 機種呼称（ラベル生成用）
+    machineType: item['OData__x6a5f__x7a2e__x547c__x79f0_']                                         || '',  // 機種呼称
+    // 改修: ラベル初期値を機種呼称から環境使用用途へ変更するため追加（SP内部名32文字截断）
+    usage:       item['OData__x74b0__x5883__x4f7f__x7528__x75']                                     || '',  // 環境使用用途（ラベル生成用）
     // 改修: 1案件=1予約ガードの判定用にステータス列を追加（update_action_statusと同一の内部名）
     status:      item['OData__x30b9__x30c6__x30fc__x30bf__x30']                                     || '',
     // 改修: 利用取消依頼の取消理由列。事務局が予約削除時にこの有無でステータス遷移先を判定する

@@ -501,9 +501,9 @@ function resolveMailAddress(machine) {
 function mailSignature() {
 	const contact = (mailConfig.pmoTo || '').split(',')[0].trim();
 	return `\n────────────────────\n` +
-		`統合HILS予約管理表事務局\n` +
+		`統合HILS貸出予約サイト事務局\n` +
 		`お問い合わせ: ${contact}\n` +
-		`予約管理表: ${location.origin}/\n` +
+		`HILS貸出予約サイト: ${location.origin}/\n` +
 		`────────────────────`;
 }
 
@@ -1660,17 +1660,46 @@ function onDragResUp() {
     const { resId, newStart, newEnd, newRow } = _drag;
     const res        = state.reservations[resId];
     const newMachine = getAllMachines()[newRow];
-    if (res && !checkOverlap(resId, newMachine, newStart, newEnd)) {
-      state.reservations[resId] = {
-        ...res,
-        machine: newMachine,
-        start:   dateToIso(newStart),
-        end:     dateToIso(newEnd),
-      };
-      saveReservations(state.reservations);
-      // 改修(SP連携マージ): SP を非同期更新（楽観更新。checkOverlapはローカルで保証済み）
-      const spId = state.reservations[resId].spId;
-      if (spId != null) apiUpdate(spId, state.reservations[resId]);
+    if (res) {
+      // 改修: 複数筐体一括登録の連動予約（同一groupIdの兄弟）をドラッグ編集にも連動させる。
+      // 兄弟は日付（start/end）のみ新日程へ追従し、筐体行（machine）は各自固定のまま変更しない。
+      const groupId    = res.groupId;
+      const siblingIds = groupId == null
+        ? []
+        : state.reservations
+            .map((_, i) => i)
+            .filter(i => i !== resId && state.reservations[i].groupId === groupId);
+
+      // 改修: 掴んだ予約・兄弟予約のいずれか1件でも日程重複するならドラッグ全体を中止する
+      const grabbedOverlap = checkOverlap(resId, newMachine, newStart, newEnd);
+      const siblingOverlap = siblingIds.some(sId =>
+        checkOverlap(sId, state.reservations[sId].machine, newStart, newEnd)
+      );
+
+      if (!grabbedOverlap && !siblingOverlap) {
+        state.reservations[resId] = {
+          ...res,
+          machine: newMachine,
+          start:   dateToIso(newStart),
+          end:     dateToIso(newEnd),
+        };
+        saveReservations(state.reservations);
+        // 改修(SP連携マージ): SP を非同期更新（楽観更新。checkOverlapはローカルで保証済み）
+        const spId = state.reservations[resId].spId;
+        if (spId != null) apiUpdate(spId, state.reservations[resId]);
+
+        // 改修: 連動する兄弟予約の日程を追従（筐体行は変更しない）
+        for (const sId of siblingIds) {
+          state.reservations[sId] = {
+            ...state.reservations[sId],
+            start: dateToIso(newStart),
+            end:   dateToIso(newEnd),
+          };
+          saveReservations(state.reservations);
+          const sSpId = state.reservations[sId].spId;
+          if (sSpId != null) apiUpdate(sSpId, state.reservations[sId]);
+        }
+      }
     }
   }
 
@@ -3474,7 +3503,7 @@ async function init() {
       }
       // 改修(第12回): 自動記入用データをstateに保持（登録ダイアログで初期値セット）W-4
       state.autoFill = {
-        label:     actionItem.machineType || '',  // 機種呼称をラベル初期値に
+        label:     actionItem.usage       || '',  // 改修: 機種呼称→環境使用用途をラベル初期値に変更
         applicant: actionItem.applicant   || '',  // 申請者名を申請者欄初期値に（改修: 借用者欄から変更）
         email:     actionItem.email       || '',
         category:  actionItem.category    || '',
