@@ -38,6 +38,9 @@
         <button id="next-btn"     class="btn btn-nav">次月 ▶</button>
         <button id="today-btn"    class="btn btn-today">今月</button>
         <button id="register-btn" class="btn btn-register">＋ 登録</button>
+        <!-- 改修(休日設定): 休日設定ボタン（事務局のみ表示・非事務局はJSで隠す） -->
+        <!-- 改修(色調整): 登録ボタン(緑)と同色で見分けづらかったため専用色(インディゴ)に変更 -->
+        <button id="holiday-btn" class="btn btn-holiday">休日設定</button>
         <!-- 改修: スクショ機能（📷保存ボタン）は削除 -->
         <!-- 改修(第4回): 西/南HILSルーム切替プルダウン -->
         <!-- 改修: 設置場所（61号棟3F）をルーム名に併記 -->
@@ -116,6 +119,33 @@
               <div class="dialog-footer-right">
                 <button id="cancel-cancel" class="btn btn-cancel">キャンセル</button>
                 <button id="cancel-ok" class="btn btn-ok">依頼</button>
+              </div>
+            </div>
+          </div>
+          <!-- 改修(休日設定): 休日設定フォーム（事務局のみ。全PC共通の休日マスタを日付範囲で追加・削除する） -->
+          <div id="holiday-pane" class="form-pane hidden">
+            <div class="form-pane-header"><span>休日設定</span></div>
+            <div class="form-pane-body">
+              <div class="form-row">
+                <label>開始日:</label>
+                <input type="date" id="holiday-start">
+              </div>
+              <div class="form-row">
+                <label>終了日:</label>
+                <input type="date" id="holiday-end">
+              </div>
+              <div class="form-row">
+                <button id="holiday-add-btn" type="button" class="btn btn-ok">範囲を追加</button>
+              </div>
+              <div class="form-row">
+                <label>登録済み休日:</label>
+              </div>
+              <ul id="holiday-list" class="holiday-list"></ul>
+            </div>
+            <div class="form-pane-footer">
+              <div class="dialog-footer-right">
+                <button id="holiday-cancel" class="btn btn-cancel">キャンセル</button>
+                <button id="holiday-save" class="btn btn-ok">保存</button>
               </div>
             </div>
           </div>

@@ -18,24 +18,33 @@ function loadEnv() {
 }
 loadEnv();
 
+// 改修(CSV集約): CSVファイルが増えクラッタ化したため、全CSVを CSVデータ\ フォルダへ集約する
+// 本番環境ではサーバーPC上の絶対パスを各 *_PATH / *_DIR 環境変数に指定すること
+const CSV_DATA_DIR = path.join(__dirname, '../CSVデータ');
+
 // 改修(起動連携): 凡例色リストCSVのパスと行数上限を設定
-// 本番環境ではサーバーPC上の絶対パスを LEGEND_CSV_PATH に指定すること
-const CSV_PATH     = process.env.LEGEND_CSV_PATH || path.join(__dirname, '../凡例色リスト.csv');
+const CSV_PATH     = process.env.LEGEND_CSV_PATH || path.join(CSV_DATA_DIR, '凡例色リスト.csv');
 const CSV_MAX_ROWS = parseInt(process.env.LEGEND_CSV_MAX || '500', 10);
 
-// 改修(状態分離): 予備日/設備故障/休日を記録する状態リストCSVのパス
-// 通常予約は凡例色リストCSV、非通常（予備日/設備故障/休日）は本CSVに分離して記録する
-const STATUS_CSV_PATH = process.env.STATUS_CSV_PATH || path.join(__dirname, '../状態リスト.csv');
+// 改修(状態分離): 予備日/設備故障を記録する状態リストCSVのパス（休日はHOLIDAY_CSV_PATHへ分離済み）
+// 通常予約は凡例色リストCSV、非通常（予備日/設備故障）は本CSVに分離して記録する
+const STATUS_CSV_PATH = process.env.STATUS_CSV_PATH || path.join(CSV_DATA_DIR, '状態リスト.csv');
 
 // 改修(筐体マスタ共通化): 筐体マスタCSV（ルーム別）を格納するディレクトリ
-// 本番ではサーバーPC上の絶対パスを MACHINE_CSV_DIR に指定すること
-const MACHINE_CSV_DIR   = process.env.MACHINE_CSV_DIR || path.join(__dirname, '../筐体マスタ');
+const MACHINE_CSV_DIR   = process.env.MACHINE_CSV_DIR || path.join(CSV_DATA_DIR, '筐体マスタ');
 // ルーム名 → CSVファイル名の対応表（許可ルームをここで固定し、パストラバーサルを防止）
 const MACHINE_CSV_FILES = { west: '筐体一覧_west.csv', south: '筐体一覧_south.csv' };
 
 // 改修(凡例共通化): 凡例マスタCSV（全ルーム共通・単一ファイル）のパス
-// 本番ではサーバーPC上の絶対パスを LEGEND_MASTER_PATH に指定すること
-const LEGEND_MASTER_PATH = process.env.LEGEND_MASTER_PATH || path.join(__dirname, '../凡例マスタ.csv');
+const LEGEND_MASTER_PATH = process.env.LEGEND_MASTER_PATH || path.join(CSV_DATA_DIR, '凡例マスタ.csv');
+
+// 改修(休日設定): 休日リストCSV（全ルーム共通・単一ファイル・日付のみ）のパス
+// 休日は筐体に依存しないため凡例マスタと同じ「配列全置換」方式で管理する
+const HOLIDAY_CSV_PATH = process.env.HOLIDAY_CSV_PATH || path.join(CSV_DATA_DIR, '休日リスト.csv');
+
+// 改修(マニュアルHTTP配信): マニュアルPDFの配信元ディレクトリ
+// 本番はWebアプリ階層が無くbackendの一つ上が直接マニュアル\のため既定値でそのまま正しい
+const MANUAL_DIR = process.env.MANUAL_DIR || path.join(__dirname, '../マニュアル');
 
 // 改修: メール宛先/CC設定 ── 開発者が起動時にコンソールから事務局宛先(To)・各CCを入力できるようにする。
 // Node(フロント発メール)とPythonバッチ(hils_alert.py)の両方から参照するため、専用JSONファイルへ永続化する。
@@ -149,6 +158,7 @@ const MIME_TYPES = {
   '.js':   'application/javascript; charset=utf-8',
   '.png':  'image/png',
   '.ico':  'image/x-icon',
+  '.pdf':  'application/pdf',  // 改修(マニュアルHTTP配信): マニュアルPDF配信用
 };
 
 // ── ヘルパー ──
@@ -551,6 +561,54 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 改修(休日設定): GET /api/holidays — 休日リストCSVをISO日付文字列の配列で返す（全PC共通）
+  // CSV未作成時は空配列を返す（凡例マスタと異なり初期シードは不要）
+  if (pathname === '/api/holidays' && method === 'GET') {
+    try {
+      jsonOk(res, parseHolidayList());
+    } catch (e) {
+      console.error('GET /api/holidays:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(休日設定): POST /api/holidays — 休日リストCSVを配列全置換で保存（全PC共通）
+  if (pathname === '/api/holidays' && method === 'POST') {
+    try {
+      const body = await readBody(req);
+      writeHolidayList(Array.isArray(body) ? body : (body.holidays || []));
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('POST /api/holidays:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(マニュアルHTTP配信): マニュアルPDFをアプリ自身から配信する。
+  // SharePointリンクはアクセス権次第で閲覧できない場合があるため、PDF実体(アプリルート直下の マニュアル\ に
+  // 手動配置済み)を同一ホストから返す。serveStatic は FRONTEND(frontend/またはdist/) 配下限定のため専用処理とする。
+  // pathname はURL仕様上パーセントエンコードされているため、日本語パスの比較にはデコードが必要
+  if (decodeURIComponent(pathname).startsWith('/マニュアル/') && method === 'GET') {
+    const relPath  = decodeURIComponent(pathname).replace(/^\/マニュアル\//, '');
+    const filePath = path.join(MANUAL_DIR, relPath);
+    // パストラバーサル防止
+    if (!filePath.startsWith(MANUAL_DIR)) {
+      res.writeHead(403); res.end('Forbidden'); return;
+    }
+    fs.readFile(filePath, (err, data) => {
+      if (err) {
+        if (err.code === 'ENOENT') { res.writeHead(404); res.end('Not Found'); }
+        else { res.writeHead(500); res.end('Server Error'); }
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': MIME_TYPES['.pdf'] });
+      res.end(data);
+    });
+    return;
+  }
+
   // ── 静的ファイル配信 ──
   serveStatic(req, res, pathname);
 });
@@ -875,6 +933,45 @@ function writeLegendMaster(legend) {
   // UTF-8 BOMを先頭に付与（日本語Windowsのアプリが文字化けしないよう）
   const bom = '﻿';
   fs.writeFileSync(LEGEND_MASTER_PATH, bom + [headerLine, ...dataLines].join('\r\n') + '\r\n', 'utf8');
+}
+
+// ────────────────────────────────────────────
+// 改修(休日設定): 休日リストCSV ヘルパー（全ルーム共通・単一ファイル・配列全置換方式）
+// CSVスキーマ（1列）: date（ISO形式 YYYY-MM-DD）
+// 事務局が設定した休日は全PC共通で反映するため、凡例マスタと同じ全置換方式で管理する
+// ────────────────────────────────────────────
+
+// 休日リストCSVを読み込み、ISO日付文字列の配列を返す
+// ファイルが存在しない場合は空配列を返す（凡例マスタと異なり初期シードは不要）
+function parseHolidayList() {
+  let raw;
+  try {
+    raw = fs.readFileSync(HOLIDAY_CSV_PATH, 'utf8');
+  } catch (_) {
+    return [];
+  }
+  // UTF-8 BOM（U+FEFF）を除去してから分割
+  const lines = raw.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim() !== '');
+  if (lines.length < 2) return [];
+  const dates = [];
+  for (let i = 1; i < lines.length; i++) {
+    const vals = splitCsvLine(lines[i]);
+    const d = unquote(vals[0] || '');
+    if (d) dates.push(d);
+  }
+  return dates;
+}
+
+// 休日リスト（ISO日付文字列の配列）をCSVへ全置換保存する。重複除去・昇順ソートしてから書き込む
+function writeHolidayList(dates) {
+  // 格納先フォルダが無ければ作成（初回起動時）
+  fs.mkdirSync(path.dirname(HOLIDAY_CSV_PATH), { recursive: true });
+  const rows = Array.from(new Set(Array.isArray(dates) ? dates : [])).sort();
+  const headerLine = quoteVal('date');
+  const dataLines  = rows.map(d => quoteVal(d));
+  // UTF-8 BOMを先頭に付与（日本語Windowsのアプリが文字化けしないよう）
+  const bom = '﻿';
+  fs.writeFileSync(HOLIDAY_CSV_PATH, bom + [headerLine, ...dataLines].join('\r\n') + '\r\n', 'utf8');
 }
 
 // 改修(第13回): SP列名変換を統合HILS使用履歴リストの実内部名に差替え

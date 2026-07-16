@@ -88,6 +88,9 @@ body {
 .btn-today:hover { background: #0e7490; }
 .btn-register { background: #16a34a; color: #fff; }
 .btn-register:hover { background: #15803d; }
+/* 改修(休日設定ボタン色調整): 登録ボタン(緑)と隣接して見分けづらいため専用色に分離 */
+.btn-holiday  { background: #4f46e5; color: #fff; }
+.btn-holiday:hover { background: #4338ca; }
 .btn-edit     { background: #475569; color: #fff; height: 26px; font-size: 10px; }
 .btn-edit:hover { background: #334155; }
 /* 改修(マージ): 予約削除ボタン（編集ダイアログのフッター左側で使用） */
@@ -736,6 +739,25 @@ body {
 .form-pane-footer .btn-delete,
 .form-pane-footer .btn-terminate {
   border-radius: 8px; padding: 0 16px; height: 36px; font-size: 11px;
+}
+/* 改修(休日設定): 休日設定ダイアログの登録済み休日一覧 */
+.holiday-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.holiday-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: 12px;
+}
+.holiday-list-empty {
+  color: #94a3b8;
+  font-size: 12px;
+  padding: 4px 6px;
 }
 .legend-title {
   font: bold 11px 'Meiryo UI', sans-serif;

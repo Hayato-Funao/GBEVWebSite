@@ -316,6 +316,8 @@ const state = {
   actionHilsRes: null,
   // 改修(第12回): URLパラメータ経由の自動記入用データ（W-4）
   autoFill:      null,
+  // 改修(休日設定): 事務局が設定した休日（全PC共通・ISO日付文字列の集合）。土日と同一扱いで予約不可にする
+  holidays:      new Set(),
 };
 
 // ────────────────────────────────────────────
@@ -379,6 +381,15 @@ function dateToIso(date) {
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
+// 改修(休日設定): 指定日が事務局設定の休日かどうかを判定する
+function isHolidayDate(date) {
+  return state.holidays.has(dateToIso(date));
+}
+// 改修(休日設定): 土日または休日（=予約不可日）かどうかを判定する。以降、土日判定していた箇所は本関数に統一する
+function isNonWorkday(date) {
+  const wday = date.getDay();
+  return wday === 0 || wday === 6 || isHolidayDate(date);
+}
 function daysInMonth(year, month) {
   return new Date(year, month, 0).getDate();
 }
@@ -413,24 +424,24 @@ function dateToCol(date) {
 function colToDate(col) {
   return state.viewDates[col] || null;
 }
+// 改修(休日設定): 土日に加えて事務局設定の休日も除外してカウントする（isNonWorkdayに統一）
 function bizDaysBetween(start, end) {
   let count = 0;
   const d = new Date(start);
   while (d <= end) {
-    const w = d.getDay();
-    if (w !== 0 && w !== 6) count++;
+    if (!isNonWorkday(d)) count++;
     d.setDate(d.getDate() + 1);
   }
   return count;
 }
 
-// start（含む）から数えて n 営業日目の日付（土日スキップ）
+// start（含む）から数えて n 営業日目の日付（土日・休日スキップ）
 function addBizDays(startDate, n) {
   if (n <= 0) return new Date(startDate);
   const d = new Date(startDate);
   let count = 0;
   while (true) {
-    if (d.getDay() !== 0 && d.getDay() !== 6) {
+    if (!isNonWorkday(d)) {
       count++;
       if (count === n) return new Date(d);
     }
@@ -438,13 +449,13 @@ function addBizDays(startDate, n) {
   }
 }
 
-// end（含む）が n 営業日目になるような最も早い開始日
+// end（含む）が n 営業日目になるような最も早い開始日（土日・休日スキップ）
 function startForBizDays(endDate, n) {
   if (n <= 0) return new Date(endDate);
   const d = new Date(endDate);
   let count = 0;
   while (true) {
-    if (d.getDay() !== 0 && d.getDay() !== 6) {
+    if (!isNonWorkday(d)) {
       count++;
       if (count === n) return new Date(d);
     }
@@ -666,6 +677,50 @@ async function apiDeleteStatus(machine, start, end) {
   }
 }
 
+// 改修(休日設定): 休日リストCSV（全PC共通・日付ベース）を取得しstate.holidaysへ反映する
+async function loadHolidays() {
+  try {
+    const res = await fetch('/api/holidays');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    state.holidays = new Set(Array.isArray(data) ? data : []);
+  } catch (e) {
+    console.error('休日リストCSV取得失敗:', e);
+    state.holidays = new Set();
+  }
+}
+
+// 改修(休日設定): 休日リストCSVへ現在のstate.holidaysの内容を全置換保存する
+async function saveHolidays() {
+  const dates = Array.from(state.holidays).sort();
+  try {
+    await fetch('/api/holidays', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(dates),
+    });
+    return true;
+  } catch (e) {
+    console.error('休日リストCSV保存失敗:', e);
+    return false;
+  }
+}
+
+// 改修(休日期限切れ削除): 表示範囲の開始日(state.viewStart＝先月月初)より前の休日を削除する。
+// 表示範囲はリロードごとに「今日」基準で再計算され、viewStartは時間経過で一方向にしか前進しないため、
+// これより前の日付は今後二度と表示範囲に入らない（＝削除して安全）。
+// 一方viewEnd側（3か月先/年度末）は時間経過で前進していくため、現時点で範囲外の未来の休日を
+// 削除すると正当なデータを消してしまう。よって削除対象はviewStartより前のみとする。
+// サーバへの保存（CSV上書き）は事務局(isAdmin)ログイン時のみ行い、一般ユーザーの閲覧では書き込まない。
+async function pruneExpiredHolidays() {
+  const cutoff = dateToIso(state.viewStart);
+  const before = state.holidays.size;
+  state.holidays = new Set(Array.from(state.holidays).filter(iso => iso >= cutoff));
+  if (state.holidays.size !== before && isAdmin) {
+    await saveHolidays();
+  }
+}
+
 // 改修(SP連携マージ): SP列に対応する最小項目を組み立てる
 // 改修: user（使用者名列）は申請者欄の値を使用。email（使用者アドレス列）を追加
 // 改修(事務局アクションリストID誤上書き防止): 第2引数isCreateを追加。
@@ -870,8 +925,8 @@ function buildResCellMap(reservations) {
       // 改修(第7回): 列インデックスを dateToCol で算出
       const col  = dateToCol(d);
       if (col === null) continue;
-      const wday = d.getDay();
-      if (wday === 0 || wday === 6) continue;
+      // 改修(休日設定): 休日も土日と同様にバー描画をスキップする
+      if (isNonWorkday(d)) continue;
       if (firstCol === null) firstCol = col;
       lastCol = col;
       map[res.machine][col] = {
@@ -1006,7 +1061,8 @@ function renderCalendar() {
   for (let col = 0; col < totalCols; col++) {
     const d    = viewDates[col];
     const wday = d.getDay();
-    const isWkd = (wday === 0 || wday === 6);
+    // 改修(休日設定): 休日も土日と同様にグレーアウトする（曜日表示自体は実際の曜日のまま）
+    const isWkd = isNonWorkday(d);
     const isTod = d.getFullYear() === todayY && d.getMonth() === todayM && d.getDate() === todayD;
     // 曜日表示用インデックス変換（JS: 0=日〜6=土 → WEEKDAY_JP: 0=月〜6=日）
     const wdayJp = wday === 0 ? 6 : wday - 1;
@@ -1265,8 +1321,8 @@ function renderCalendar() {
     // 改修(第7回): 全表示期間の列（totalCols）を描画
     for (let col = 0; col < totalCols; col++) {
       const d     = viewDates[col];
-      const wday  = d.getDay();
-      const isWkd = (wday === 0 || wday === 6);
+      // 改修(休日設定): 休日も土日と同様にグレーアウト・予約不可にする
+      const isWkd = isNonWorkday(d);
       const isTod = d.getFullYear() === todayY && d.getMonth() === todayM && d.getDate() === todayD;
       const cellKey = `${rowIdx}-${col}`;
       const resInfo = resCells[machine]?.[col];
@@ -1451,8 +1507,8 @@ function renderCalendar() {
     // 改修(第7回): totalCols 列分の空セルを生成
     for (let col = 0; col < totalCols; col++) {
       const d     = viewDates[col];
-      const wday  = d.getDay();
-      const isWkd = (wday === 0 || wday === 6);
+      // 改修(休日設定): 休日も土日と同様にグレーアウトする
+      const isWkd = isNonWorkday(d);
       const addTd = document.createElement('td');
       addTd.className = 'gantt-cell machine-add-cell' + (isWkd ? ' weekend' : '');
       addTr.appendChild(addTd);
@@ -1564,9 +1620,10 @@ function cellFromPoint(x, y) {
   return { row: parseInt(td.dataset.row), col: parseInt(td.dataset.col) };
 }
 
+// 改修(休日設定): 土日に加えて休日もスキップして直近の予約可能日を返す
 function nearestWeekday(date, forward) {
   const d = new Date(date);
-  while (d.getDay() === 0 || d.getDay() === 6) {
+  while (isNonWorkday(d)) {
     d.setDate(d.getDate() + (forward ? 1 : -1));
   }
   return d;
@@ -1633,13 +1690,14 @@ function onDragResMove(e) {
   const previewCells = new Set();
   const ghostCells   = new Set();
 
+  // 改修(休日設定): 休日も土日と同様にプレビュー/ゴースト対象から除外する
   for (let d = new Date(newStart); d <= newEnd; d.setDate(d.getDate() + 1)) {
     const c = dateToCol(d);
-    if (c !== null && d.getDay() !== 0 && d.getDay() !== 6) previewCells.add(`${newRow}-${c}`);
+    if (c !== null && !isNonWorkday(d)) previewCells.add(`${newRow}-${c}`);
   }
   for (let d = new Date(origStart); d <= origEnd; d.setDate(d.getDate() + 1)) {
     const c = dateToCol(d);
-    if (c !== null && d.getDay() !== 0 && d.getDay() !== 6) ghostCells.add(`${origRow}-${c}`);
+    if (c !== null && !isNonWorkday(d)) ghostCells.add(`${origRow}-${c}`);
   }
 
   _drag.previewCells = previewCells;
@@ -1771,9 +1829,8 @@ function onCellMouseOver(e) {
   state.selectedCells = new Set();
   for (let r = minRow; r <= maxRow; r++) {
     for (let c = minCol; c <= maxCol; c++) {
-      // 改修(第7回): 曜日判定を viewDates[c].getDay() で直接取得
-      const wday = state.viewDates[c].getDay();
-      if (wday !== 0 && wday !== 6) state.selectedCells.add(`${r}-${c}`);
+      // 改修(休日設定): 土日に加えて休日も選択対象から除外する
+      if (!isNonWorkday(state.viewDates[c])) state.selectedCells.add(`${r}-${c}`);
     }
   }
   renderCalendar();
@@ -2379,8 +2436,10 @@ document.getElementById('info-report-btn').addEventListener('click', async () =>
 
 
 // 改修: マニュアルボタン — ユーザー用/事務局用でリンクを分岐して新規タブで開く
-const MANUAL_URL_USER  = 'https://globalhonda.sharepoint.com/:b:/r/sites/jphgt110776/Shared%20Documents/01_%E4%BA%88%E7%B4%84%E7%AE%A1%E7%90%86%E8%A1%A8/%E3%83%9E%E3%83%8B%E3%83%A5%E3%82%A2%E3%83%AB/%E7%B5%B1%E5%90%88HILS%E4%BA%88%E7%B4%84%E3%82%B5%E3%82%A4%E3%83%88_%E3%83%A6%E3%83%BC%E3%82%B6%E3%83%BC%E7%94%A8%E6%93%8D%E4%BD%9C%E3%83%9E%E3%83%8B%E3%83%A5%E3%82%A2%E3%83%AB.pdf?csf=1&web=1&e=j0h58j';
-const MANUAL_URL_ADMIN = 'https://globalhonda.sharepoint.com/:b:/r/sites/jphgt110776/Shared%20Documents/01_%E4%BA%88%E7%B4%84%E7%AE%A1%E7%90%86%E8%A1%A8/%E3%83%9E%E3%83%8B%E3%83%A5%E3%82%A2%E3%83%AB/%E7%B5%B1%E5%90%88HILS%E4%BA%88%E7%B4%84%E3%82%B5%E3%82%A4%E3%83%88_%E4%BA%8B%E5%8B%99%E5%B1%80%E7%94%A8%E6%93%8D%E4%BD%9C%E3%83%9E%E3%83%8B%E3%83%A5%E3%82%A2%E3%83%AB.pdf?csf=1&web=1&e=0QUq9l';
+// 改修(マニュアル配信変更): SharePointリンクはアクセス権次第で見られない場合があるため、
+// アプリ自身がHTTP配信するPDF（server.jsの /マニュアル/ 配信ルート）への相対パスに変更する
+const MANUAL_URL_USER  = '/マニュアル/統合HILS予約サイト_ユーザー用操作マニュアル.pdf';
+const MANUAL_URL_ADMIN = '/マニュアル/統合HILS予約サイト_事務局用操作マニュアル.pdf';
 document.getElementById('manual-btn').addEventListener('click', () => {
   window.open(isAdmin ? MANUAL_URL_ADMIN : MANUAL_URL_USER, '_blank');
 });
@@ -2763,10 +2822,94 @@ function closeFormPane() {
   document.getElementById('form-pane').classList.add('hidden');
   document.getElementById('extend-pane').classList.add('hidden');
   document.getElementById('cancel-pane').classList.add('hidden');  // 改修: 利用取消依頼ペインも排他非表示
+  document.getElementById('holiday-pane').classList.add('hidden');  // 改修(休日設定): 休日設定ペインも排他非表示
   document.getElementById('form-empty').classList.remove('hidden');
   // 改修: フォームモードをリセット（日付自動連動の対象外にする）
   state.formMode = null;
 }
+
+// ────────────────────────────────────────────
+// 改修(休日設定): 休日設定ダイアログ（事務局のみ・全PC共通の休日マスタを日付範囲で追加・削除する）
+// ────────────────────────────────────────────
+
+// 登録済み休日一覧（昇順）をリスト表示する
+function renderHolidayList() {
+  const listEl = document.getElementById('holiday-list');
+  const dates  = Array.from(state.holidays).sort();
+  if (dates.length === 0) {
+    listEl.innerHTML = '<li class="holiday-list-empty">登録済みの休日はありません</li>';
+    return;
+  }
+  listEl.innerHTML = dates.map(iso =>
+    `<li class="holiday-list-item" data-date="${iso}">
+      <span>${iso}</span>
+      <button type="button" class="btn btn-delete holiday-del-btn" data-date="${iso}">削除</button>
+    </li>`
+  ).join('');
+}
+
+// 休日設定ボタン — holiday-paneを開く（他ペインは排他非表示）
+document.getElementById('holiday-btn').addEventListener('click', () => {
+  document.getElementById('form-pane').classList.add('hidden');
+  document.getElementById('extend-pane').classList.add('hidden');
+  document.getElementById('cancel-pane').classList.add('hidden');
+  document.getElementById('form-empty').classList.add('hidden');
+  document.getElementById('holiday-pane').classList.remove('hidden');
+  document.getElementById('holiday-start').value = '';
+  document.getElementById('holiday-end').value   = '';
+  renderHolidayList();
+  state.formMode = null;
+});
+
+// 「範囲を追加」ボタン — 開始日〜終了日を1日ずつ展開してstate.holidaysへ追加（画面上のみ・保存は別ボタン）
+document.getElementById('holiday-add-btn').addEventListener('click', () => {
+  const startVal = document.getElementById('holiday-start').value;
+  const endVal   = document.getElementById('holiday-end').value;
+  if (!startVal || !endVal) {
+    alert('開始日・終了日を入力してください');
+    return;
+  }
+  if (startVal > endVal) {
+    alert('終了日が開始日より前です');
+    return;
+  }
+  for (let d = isoToDate(startVal); d <= isoToDate(endVal); d.setDate(d.getDate() + 1)) {
+    state.holidays.add(dateToIso(d));
+  }
+  renderHolidayList();
+});
+
+// 一覧の「削除」ボタン — イベント委譲でstate.holidaysから除去（画面上のみ・保存は別ボタン）
+document.getElementById('holiday-list').addEventListener('click', e => {
+  const btn = e.target.closest('.holiday-del-btn');
+  if (!btn) return;
+  state.holidays.delete(btn.dataset.date);
+  renderHolidayList();
+});
+
+// 「保存」ボタン — サーバへ全置換保存し、カレンダーへ反映する
+document.getElementById('holiday-save').addEventListener('click', async () => {
+  showBusy('休日設定を保存中...');
+  try {
+    const ok = await saveHolidays();
+    if (ok) {
+      setStatus('休日設定を保存しました。');
+      closeFormPane();
+      renderCalendar();
+    } else {
+      setStatus('休日設定の保存に失敗しました', 'red');
+    }
+  } finally {
+    hideBusy();
+  }
+});
+
+// 「キャンセル」ボタン — サーバ保存済みの内容へ戻す（未保存の追加・削除を破棄）
+document.getElementById('holiday-cancel').addEventListener('click', async () => {
+  await loadHolidays();
+  closeFormPane();
+  renderCalendar();
+});
 
 function showDialog(title, data, mode, resId = null) {
   // 改修: モーダル(dialog-overlay)廃止→サイドパネル(form-pane)に差し替え
@@ -2806,11 +2949,11 @@ function showDialog(title, data, mode, resId = null) {
     </div>
     <div class="form-row">
       <label>状態:</label>
+      <!-- 改修(休日設定): 休日は状態選択肢から除外し、専用の「休日設定」ダイアログで日付ベースに管理する -->
       <select id="f-status">
         <option value="normal"${(data.status || 'normal') === 'normal' ? ' selected' : ''}>通常</option>
         <option value="spare"${data.status === 'spare' ? ' selected' : ''}>予備日</option>
         <option value="fault"${data.status === 'fault' ? ' selected' : ''}>設備故障</option>
-        <option value="holiday"${data.status === 'holiday' ? ' selected' : ''}>休日</option>
       </select>
     </div>
     <div class="form-row">
@@ -3454,6 +3597,11 @@ async function init() {
 
   document.getElementById('user-name').textContent = isAdmin ? '事務局' : 'ユーザー';
   if (!isAdmin) document.getElementById('register-btn').classList.add('hidden');
+  // 改修(休日設定): 休日設定ボタンは事務局のみ表示する
+  if (!isAdmin) document.getElementById('holiday-btn').classList.add('hidden');
+
+  // 改修(休日設定): サーバから全PC共通の休日マスタを取得し、以降のグレーアウト判定に使う
+  await loadHolidays();
 
   // 改修(第12回): URLクエリパラメータから仮IDを受取り、SPからアクションリスト行を取得（W-2）
   const _actionId = _urlParams.get('id');  // 事務局アクションリストの仮ID
@@ -3656,6 +3804,8 @@ async function init() {
 
   // 改修(第7回): 表示期間を初期化してからカレンダーを描画し、今日へ自動スクロール
   initViewRange();
+  // 改修(休日期限切れ削除): viewStart確定後に期限切れ休日を削除（レンダリング前に反映させる）
+  await pruneExpiredHolidays();
   renderCalendar();
   scrollToDate(new Date());
   // 改修(第7回追補): ウィンドウリサイズ時に日付列幅を自動再計算（一度だけ登録）
