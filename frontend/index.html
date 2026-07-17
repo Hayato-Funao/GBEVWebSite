@@ -178,9 +178,10 @@
         <!-- 予約内容確認エリア -->
         <div class="accept-card">
           <h3 class="accept-card-title">予約内容</h3>
+          <!-- 改修(複数行予約表示調整): 借用者/使用開始日/使用終了日は複数行予約でも共通のため単一セル、
+               機種名のみ複数予約分を列挙する（#accept-info-machinesにrenderAcceptInfo()が行を差し込む） -->
           <table class="accept-info-table">
-            <!-- 改修: ラベル→機種名に変更（実データに合わせて） -->
-            <tr><th>機種名</th><td id="accept-info-label">−</td></tr>
+            <tr><th>機種名</th><td><div id="accept-info-machines">−</div></td></tr>
             <tr><th>借用者</th><td id="accept-info-user">−</td></tr>
             <tr><th>使用開始日</th><td id="accept-info-start">−</td></tr>
             <tr><th>使用終了日</th><td id="accept-info-end">−</td></tr>

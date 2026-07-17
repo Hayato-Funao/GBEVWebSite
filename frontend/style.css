@@ -1093,6 +1093,10 @@ body {
   padding: 4px 6px;
   color: #1e293b;
 }
+/* 改修(複数行予約表示調整): 機種名を複数行列挙する際、行間に軽い余白を付ける（1行目は余白なし） */
+#accept-info-machines > div + div {
+  margin-top: 2px;
+}
 .accept-card-footer {
   display: flex;
   justify-content: flex-end;
