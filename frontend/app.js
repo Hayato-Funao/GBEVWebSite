@@ -845,6 +845,57 @@ function openCellCommentEditor(td, machine, date, currentText) {
   input.addEventListener('blur', commit);
 }
 
+// 改修(セルコメント機能改修): 右クリックで表示する小さなコンテキストメニュー。
+// items: [{label, onSelect}, ...]。項目クリックでonSelect実行後にメニューを除去する。
+// メニュー外クリック・Escapeキーでも除去する（1回きりのdocumentリスナーを都度登録・解除する）
+let _cellContextMenuEl = null;
+
+function closeCellContextMenu() {
+  if (_cellContextMenuEl) {
+    _cellContextMenuEl.remove();
+    _cellContextMenuEl = null;
+  }
+}
+
+function showCellContextMenu(x, y, items) {
+  closeCellContextMenu();
+  const menu = document.createElement('div');
+  menu.className = 'cell-context-menu';
+  menu.style.left = `${x}px`;
+  menu.style.top  = `${y}px`;
+  items.forEach(item => {
+    const itemEl = document.createElement('div');
+    itemEl.className   = 'cell-context-menu-item';
+    itemEl.textContent = item.label;
+    itemEl.addEventListener('click', () => {
+      closeCellContextMenu();
+      item.onSelect();
+    });
+    menu.appendChild(itemEl);
+  });
+  document.body.appendChild(menu);
+  _cellContextMenuEl = menu;
+
+  // 改修: メニュー表示直後の右クリック自身のmousedown/contextmenuで即閉じないよう、次のイベントループで登録する
+  setTimeout(() => {
+    document.addEventListener('mousedown', onOutsideMouseDown);
+    document.addEventListener('keydown', onMenuKeyDown);
+  }, 0);
+
+  function onOutsideMouseDown(e) {
+    if (menu.contains(e.target)) return;
+    closeCellContextMenu();
+    document.removeEventListener('mousedown', onOutsideMouseDown);
+    document.removeEventListener('keydown', onMenuKeyDown);
+  }
+  function onMenuKeyDown(e) {
+    if (e.key !== 'Escape') return;
+    closeCellContextMenu();
+    document.removeEventListener('mousedown', onOutsideMouseDown);
+    document.removeEventListener('keydown', onMenuKeyDown);
+  }
+}
+
 // 改修(SP連携マージ): SP列に対応する最小項目を組み立てる
 // 改修: user（申請者名列）は申請者欄の値を使用。email（使用者アドレス列）を追加
 // 改修(事務局アクションリストID誤上書き防止): 第2引数isCreateを追加。
@@ -1128,6 +1179,13 @@ function renderCalendar() {
   const existingCg = table.querySelector('colgroup');
   if (existingCg) existingCg.remove();
   const cg = document.createElement('colgroup');
+  // 改修(行D&D): ドラッグハンドル専用列（事務局のみ・アドレス列より左）
+  if (isAdmin) {
+    const colHandle = document.createElement('col');
+    colHandle.className = 'col-handle';
+    colHandle.style.width = '32px';
+    cg.appendChild(colHandle);
+  }
   // 改修: 列順入れ替え（アドレス→筐体→担当者）。アドレス列を筐体列より先に追加する
   // 改修(表拡大): アドレス列（筐体ごとの手入力識別情報。メールアドレスとは別物。南HILSルームのみ表示、
   // 幅80px→120px/非表示0px。表全体1.5倍化の一環）
@@ -1161,6 +1219,13 @@ function renderCalendar() {
 
   // 行1: 月見出し行
   const monthRow   = document.createElement('tr');
+  // 改修(行D&D): ドラッグハンドル専用列の見出し（事務局のみ・アドレス列見出しより先に追加）
+  if (isAdmin) {
+    const thHandle = document.createElement('th');
+    thHandle.className = 'handle-col';
+    thHandle.rowSpan   = 2;
+    monthRow.appendChild(thHandle);
+  }
   // 改修(第7回): 筐体列・担当者列は rowSpan=2 で両ヘッダ行を占有
   // 改修: 列順入れ替え（アドレス→筐体→担当者）。アドレス列見出しを筐体列より先に追加する
   // 改修: アドレス列見出し（筐体ごとの手入力識別情報。メールアドレスとは別物）
@@ -1245,12 +1310,7 @@ function renderCalendar() {
   function buildMachineRow(machine, rowIdx) {
     const tr = document.createElement('tr');
 
-    // 機種名セル（左固定列）
-    const tdMachine = document.createElement('td');
-    tdMachine.className = 'machine-col';
-    tdMachine.title     = isAdmin ? `${machine}（ダブルクリックで編集）` : machine;
-
-    // 改修(行D&D): 筐体行の並び替え用ドラッグハンドル（事務局のみ）。
+    // 改修(行D&D): 筐体行の並び替え用ドラッグハンドル（事務局のみ・アドレス列の左に専用列として配置）。
     // メイン筐体/予備の区切りをまたぐ移動は不可のため、rowIdxからセグメント（main/spare）と
     // セグメント内ローカルindexをtrのdatasetへ保持し、dragstart/dropで参照する
     if (isAdmin) {
@@ -1258,6 +1318,9 @@ function renderCalendar() {
       const segLocalIdx = isSpareSeg ? rowIdx - state.machines.length : rowIdx;
       tr.dataset.seg      = isSpareSeg ? 'spare' : 'main';
       tr.dataset.localIdx = segLocalIdx;
+
+      const tdHandle = document.createElement('td');
+      tdHandle.className = 'handle-col';
 
       const dragHandle = document.createElement('span');
       dragHandle.className   = 'row-drag-handle';
@@ -1270,7 +1333,8 @@ function renderCalendar() {
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', JSON.stringify({ seg: tr.dataset.seg, localIdx: segLocalIdx }));
       });
-      tdMachine.appendChild(dragHandle);
+      tdHandle.appendChild(dragHandle);
+      tr.appendChild(tdHandle);
 
       // ドロップ先の行（同一セグメントのみ受け入れる）
       tr.addEventListener('dragover', e => {
@@ -1297,6 +1361,11 @@ function renderCalendar() {
         renderCalendar();
       });
     }
+
+    // 機種名セル（左固定列）
+    const tdMachine = document.createElement('td');
+    tdMachine.className = 'machine-col';
+    tdMachine.title     = isAdmin ? `${machine}（ダブルクリックで編集）` : machine;
 
     const nameSpan = document.createElement('span');
     nameSpan.className   = 'machine-name';
@@ -1522,6 +1591,9 @@ function renderCalendar() {
       const isTod = d.getFullYear() === todayY && d.getMonth() === todayM && d.getDate() === todayD;
       const cellKey = `${rowIdx}-${col}`;
       const resInfo = resCells[machine]?.[col];
+      // 改修(セルコメント機能改修): 予約の有無を問わず参照するため、分岐の前に計算する
+      const commentKey  = `${state.currentRoom}|${machine}|${dateToIso(d)}`;
+      const commentText = state.comments[commentKey];
 
       const td = document.createElement('td');
       let cls = 'gantt-cell';
@@ -1610,15 +1682,24 @@ function renderCalendar() {
 
         if (resInfo.status === 'block') {
           // 改修(休日設定廃止→予約不可設定): 予約不可セルはドラッグ・選択・登録ダイアログの対象外とし、
-          // 事務局のみダブルクリックで解除できるようにする
+          // 事務局のみ解除できるようにする（ダブルクリックで即解除、右クリックでコメント編集も選べる）
           if (isAdmin) {
-            td.addEventListener('dblclick', () => {
+            const unblockThisCell = () => {
               if (!confirm('この予約不可設定を解除しますか？')) return;
               const res = state.reservations[resInfo.resId];
               if (!res) return;
               apiDeleteBlock(res.room || state.currentRoom, res.machine, res.start, res.end);
               state.reservations.splice(resInfo.resId, 1);
               renderCalendar();
+            };
+            td.addEventListener('dblclick', unblockThisCell);
+            // 改修(セルコメント機能改修): 右クリックで「予約不可を解除」／「コメントを編集」を選べるようにする
+            td.addEventListener('contextmenu', e => {
+              e.preventDefault();
+              showCellContextMenu(e.clientX, e.clientY, [
+                { label: '予約不可を解除', onSelect: unblockThisCell },
+                { label: 'コメントを編集', onSelect: () => openCellCommentEditor(td, machine, d, commentText || '') },
+              ]);
             });
           }
         } else {
@@ -1637,7 +1718,7 @@ function renderCalendar() {
             if (_resMoved) return;
             onResClick(resInfo.resId);
           });
-          // 改修: 事務局は編集ダイアログ、使用者は閲覧専用ダイアログを開く
+          // 改修: 事務局は編集ダイアログ、使用者は閲覧専用ダイアログを開く（ダブルクリックは変更しない）
           td.addEventListener('dblclick', () => {
             if (isAdmin) {
               openEditDialog(resInfo.resId);
@@ -1645,26 +1726,41 @@ function renderCalendar() {
               openViewDialog(resInfo.resId);
             }
           });
+          // 改修(セルコメント機能改修): 事務局のみ右クリックで「予約を編集」／「コメントを編集」を選べるようにする
+          if (isAdmin) {
+            td.addEventListener('contextmenu', e => {
+              e.preventDefault();
+              showCellContextMenu(e.clientX, e.clientY, [
+                { label: '予約を編集',   onSelect: () => openEditDialog(resInfo.resId) },
+                { label: 'コメントを編集', onSelect: () => openCellCommentEditor(td, machine, d, commentText || '') },
+              ]);
+            });
+          }
         }
       } else {
-        // 改修(セルコメント機能追加): 予約が無いセルにコメントがあれば直接表示する（かぶりは考慮しない）
-        const commentKey  = `${state.currentRoom}|${machine}|${dateToIso(d)}`;
-        const commentText = state.comments[commentKey];
-        if (commentText) {
-          const commentEl = document.createElement('span');
-          commentEl.className   = 'cell-comment';
-          commentEl.textContent = commentText;
-          commentEl.title       = commentText;
-          td.appendChild(commentEl);
-        }
         if (!isWkd && isAdmin) {
           td.addEventListener('mousedown', onCellMouseDown);
           td.addEventListener('mouseover', onCellMouseOver);
         }
-        // 改修(セルコメント機能追加): 事務局はダブルクリックでコメントを入力・編集・削除できる（曜日不問）
+        // 改修(セルコメント機能改修): 空セルは事務局のみ右クリックで「コメントを編集」を表示する
+        // （ダブルクリックはセル範囲選択の再描画と競合し発火しないため、右クリックに統一した）
         if (isAdmin) {
-          td.addEventListener('dblclick', () => openCellCommentEditor(td, machine, d, commentText || ''));
+          td.addEventListener('contextmenu', e => {
+            e.preventDefault();
+            showCellContextMenu(e.clientX, e.clientY, [
+              { label: 'コメントを編集', onSelect: () => openCellCommentEditor(td, machine, d, commentText || '') },
+            ]);
+          });
         }
+      }
+
+      // 改修(セルコメント機能改修): 予約の有無を問わずコメントがあれば表示する（かぶりは考慮しない）
+      if (commentText) {
+        const commentEl = document.createElement('span');
+        commentEl.className   = 'cell-comment';
+        commentEl.textContent = commentText;
+        commentEl.title       = commentText;
+        td.appendChild(commentEl);
       }
 
       // プレビュー上書き
@@ -1715,6 +1811,11 @@ function renderCalendar() {
       saveMachines();
       renderCalendar();
     });
+    // 改修(行D&D): ドラッグハンドル専用列の空セル（列数を揃えるためのプレースホルダ）
+    const addTdHandle = document.createElement('td');
+    addTdHandle.className = 'handle-col machine-add-cell';
+    addTr.appendChild(addTdHandle);
+
     // 改修: 列順入れ替え（アドレス→筐体→担当者）。アドレス列の空セルを筐体列より先に追加する
     const addTdAddress = document.createElement('td');
     addTdAddress.className = 'address-col machine-add-cell';
@@ -1750,7 +1851,8 @@ function renderCalendar() {
     divTr.className = 'spare-divider-row';
     const divTd = document.createElement('td');
     // 改修(第7回): totalCols + 機種名列 + 担当者列
-    divTd.colSpan = totalCols + 2;
+    // 改修(行D&D): 事務局はドラッグハンドル専用列が1列増えるため+1する
+    divTd.colSpan = totalCols + 2 + (isAdmin ? 1 : 0);
     divTr.appendChild(divTd);
     tbody.appendChild(divTr);
   }
@@ -2194,8 +2296,10 @@ function getStickyWidth(wrapper) {
   // 改修: アドレス列（筐体列と担当者列の間、南HILSルームのみ表示）もsticky幅に加算
   const adc = wrapper.querySelector('th.address-col');
   const ac = wrapper.querySelector('th.assignee-col');
+  // 改修(行D&D): ドラッグハンドル専用列（事務局のみ）もsticky幅に加算
+  const hc = wrapper.querySelector('th.handle-col');
   // 改修(表拡大): フォールバック幅170/80→255/120（表全体1.5倍化の一環）
-  return (mc ? mc.offsetWidth : 255) + (adc ? adc.offsetWidth : 0) + (ac ? ac.offsetWidth : 120);
+  return (mc ? mc.offsetWidth : 255) + (adc ? adc.offsetWidth : 0) + (ac ? ac.offsetWidth : 120) + (hc ? hc.offsetWidth : 0);
 }
 
 // 指定日付の列が gantt-wrapper の左端（sticky列の右側）に来るよう水平スクロール
@@ -2235,7 +2339,10 @@ function applyDateColWidth() {
   const addressW  = table.classList.contains('address-hidden') ? 0 : 120;
   const assigneeW = table.classList.contains('assignee-hidden') ? 0 : 120;
   const machineW  = 255;
-  const avail     = wrapper.clientWidth - machineW - addressW - assigneeW;
+  // 改修(行D&D): ドラッグハンドル専用列（事務局のみ・幅32px固定）
+  const handleTh  = table.querySelector('thead th.handle-col');
+  const handleW   = handleTh ? handleTh.offsetWidth : 0;
+  const avail     = wrapper.clientWidth - machineW - addressW - assigneeW - handleW;
   // 改修(表拡大): 3週間（21日）分が画面に収まるようフィット対象日数を31→21に変更
   const w         = Math.max(DATE_COL_MIN, Math.floor(avail / 21));
   // CSS変数に設定（th.date-col / td.gantt-cell が参照）
@@ -2246,17 +2353,19 @@ function applyDateColWidth() {
   // テーブル全体の px 幅を設定して fixed レイアウトを発火させる
   // これにより colgroup 幅が厳密に反映され、日付ヘッダと予約バーの列ズレが解消する
   const totalDateCols = state.viewDates ? state.viewDates.length : 0;
-  table.style.width = (machineW + addressW + assigneeW + totalDateCols * w) + 'px';
+  table.style.width = (handleW + machineW + addressW + assigneeW + totalDateCols * w) + 'px';
   // 改修(第7回追補2): 担当者列 sticky left を筐体列の実描画幅に追従させる
   // ハードコードの left:169px がずれた場合でも隙間なく密着させるための恒久対策
   // 改修: 列順入れ替え（アドレス→筐体→担当者）。筐体列はアドレス列の実描画幅（非表示時は0）に追従させる
+  // 改修(行D&D): ドラッグハンドル専用列が最左に追加されたため、アドレス列以降はすべてハンドル列幅を加算した累積値にする
   const machineTh = table.querySelector('thead th.machine-col');
   const addressTh = table.querySelector('thead th.address-col');
-  if (addressTh) table.style.setProperty('--machine-left', addressTh.offsetWidth + 'px');
+  table.style.setProperty('--address-left', handleW + 'px');
+  const addressOffsetW = addressTh ? addressTh.offsetWidth : 0;
+  if (addressTh) table.style.setProperty('--machine-left', (handleW + addressOffsetW) + 'px');
   if (machineTh) {
-    // 改修: 担当者列 sticky left は「アドレス列幅（非表示時は0）＋筐体列幅」に追従させる（列の並び順が変わっても合計幅は不変）
-    const addressOffsetW = addressTh ? addressTh.offsetWidth : 0;
-    table.style.setProperty('--assignee-left', (machineTh.offsetWidth + addressOffsetW) + 'px');
+    // 改修: 担当者列 sticky left は「ハンドル列幅＋アドレス列幅（非表示時は0）＋筐体列幅」に追従させる
+    table.style.setProperty('--assignee-left', (handleW + addressOffsetW + machineTh.offsetWidth) + 'px');
   }
 }
 
