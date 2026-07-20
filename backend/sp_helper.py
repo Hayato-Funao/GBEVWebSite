@@ -426,7 +426,7 @@ def _sp_session(token):
 # ── トークン取得 ─────────────────────────────────────────────────────────────
 
 # 改修(第14回): scopes引数追加。既定=SP .defaultスコープ（従来どおり）。Graph用等は任意スコープを渡せる
-def get_token(scopes=None):
+def get_token(scopes=None, force=False):
     import msal
 
     parsed = urlparse(SITE_URL)
@@ -434,7 +434,9 @@ def get_token(scopes=None):
         scopes = [f"{parsed.scheme}://{parsed.netloc}/.default"]
 
     cache = msal.SerializableTokenCache()
-    if os.path.exists(CACHE_FILE):
+    # 改修(再サインイン): force=True時は既存キャッシュを読み込まない。
+    #               旧アカウントのトークンを引き継がせず、必ずデバイスコード認証を発生させるため。
+    if not force and os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, 'r') as f:
             cache.deserialize(f.read())
 
@@ -445,11 +447,13 @@ def get_token(scopes=None):
     )
 
     result = None
-    accounts = app.get_accounts()
-    if accounts:
-        result = app.acquire_token_silent(scopes, account=accounts[0])
-        if result and 'error' in result:
-            result = None
+    # 改修(再サインイン): force=True時はacquire_token_silentをスキップし、必ずデバイスコードフローに進む
+    if not force:
+        accounts = app.get_accounts()
+        if accounts:
+            result = app.acquire_token_silent(scopes, account=accounts[0])
+            if result and 'error' in result:
+                result = None
 
     if not result:
         flow = app.initiate_device_flow(scopes=scopes)
@@ -525,6 +529,17 @@ def main():
 
     if cmd == 'get_token':
         print(json.dumps(get_token(), ensure_ascii=False))
+        return
+
+    # 改修(再サインイン): 既存キャッシュを無視して強制的にデバイスコード認証を行い、
+    #               token_cache.bin を新しい認証情報で上書きする（パスワード変更後・担当者交代用）。
+    #               SP操作は不要なためsess生成前に処理する（send_mailと同様の位置づけ）。
+    if cmd == 'resignin':
+        tok = get_token(force=True)
+        if 'error' in tok:
+            print(json.dumps({'error': tok['error']}, ensure_ascii=False))
+        else:
+            print(json.dumps({'resignin': 'success'}, ensure_ascii=False))
         return
 
     # 改修(第14回): Graph API /me/sendMail で委任トークンによりメール送信（SP不要のためsess生成前に処理）
