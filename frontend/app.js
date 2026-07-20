@@ -16,6 +16,8 @@ const CAL_MIN      = { year: 2025, month: 12 };
 // 改修: 予約状態（予備日・設備故障）の表示色とラベル定数
 const STATUS_SPARE_COLOR   = '#00B0F0'; // 予備日：水色
 const STATUS_HOLIDAY_COLOR = '#c8c8c8'; // 改修(第4回): 休日：土日と同じグレー
+// 改修(休日設定廃止→予約不可設定): 選択範囲（筐体×日付）単位の予約不可セルの表示色
+const STATUS_BLOCK_COLOR   = '#9ca3af';
 const STATUS_SPARE_TEXT    = '※予備日';
 const STATUS_FAULT_TEXT    = '故障';
 const EDGE_PX        = 10; // リサイズ端の判定幅（px）
@@ -52,8 +54,7 @@ const isAdmin    = _urlParams.get('user') === 'admin';
 // 改修: ?page=accept で承知/辞退ページを単独表示（使用確定通知メールのリンクから直接開く専用URL）
 const _acceptMode = _urlParams.get('page') === 'accept';
 if (_acceptMode) {
-  // ナビタブを非表示（メールから直接開く単独ページのため不要）
-  document.querySelector('.nav-tabs').classList.add('hidden');
+  // 改修(ビュータブ削除): ナビタブ自体を削除したため非表示化は不要
   // 承知/辞退ページをアクティブ化し、ビュー画面を非表示
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-accept').classList.add('active');
@@ -344,8 +345,8 @@ const state = {
   actionHilsRes: null,
   // 改修(第12回): URLパラメータ経由の自動記入用データ（W-4）
   autoFill:      null,
-  // 改修(休日設定): 事務局が設定した休日（全PC共通・ISO日付文字列の集合）。土日と同一扱いで予約不可にする
-  holidays:      new Set(),
+  // 改修(セルコメント機能追加): セル（筐体×日付）に紐づくコメント。キーは `${room}|${machine}|${date}`
+  comments:      {},
 };
 
 // ────────────────────────────────────────────
@@ -444,14 +445,11 @@ function dateToIso(date) {
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
-// 改修(休日設定): 指定日が事務局設定の休日かどうかを判定する
-function isHolidayDate(date) {
-  return state.holidays.has(dateToIso(date));
-}
-// 改修(休日設定): 土日または休日（=予約不可日）かどうかを判定する。以降、土日判定していた箇所は本関数に統一する
+// 改修(休日設定廃止): 休日設定機能は廃止し、選択範囲単位の予約不可設定（status:'block'の疑似予約）に統合した。
+// 土日判定は本関数に統一する（関数名・呼び出し箇所は維持し、休日判定のみ削除）
 function isNonWorkday(date) {
   const wday = date.getDay();
-  return wday === 0 || wday === 6 || isHolidayDate(date);
+  return wday === 0 || wday === 6;
 }
 function daysInMonth(year, month) {
   return new Date(year, month, 0).getDate();
@@ -487,7 +485,7 @@ function dateToCol(date) {
 function colToDate(col) {
   return state.viewDates[col] || null;
 }
-// 改修(休日設定): 土日に加えて事務局設定の休日も除外してカウントする（isNonWorkdayに統一）
+// 土日を除外してカウントする（isNonWorkdayに統一）
 function bizDaysBetween(start, end) {
   let count = 0;
   const d = new Date(start);
@@ -498,7 +496,7 @@ function bizDaysBetween(start, end) {
   return count;
 }
 
-// start（含む）から数えて n 営業日目の日付（土日・休日スキップ）
+// start（含む）から数えて n 営業日目の日付（土日スキップ）
 function addBizDays(startDate, n) {
   if (n <= 0) return new Date(startDate);
   const d = new Date(startDate);
@@ -512,7 +510,7 @@ function addBizDays(startDate, n) {
   }
 }
 
-// end（含む）が n 営業日目になるような最も早い開始日（土日・休日スキップ）
+// end（含む）が n 営業日目になるような最も早い開始日（土日スキップ）
 function startForBizDays(endDate, n) {
   if (n <= 0) return new Date(endDate);
   const d = new Date(endDate);
@@ -746,48 +744,105 @@ async function apiDeleteStatus(machine, start, end) {
   }
 }
 
-// 改修(休日設定): 休日リストCSV（全PC共通・日付ベース）を取得しstate.holidaysへ反映する
-async function loadHolidays() {
+// 改修(休日設定廃止→予約不可設定): 予約不可リストCSV（筐体×日付の選択範囲単位）を取得する
+async function fetchBlockList() {
   try {
-    const res = await fetch('/api/holidays');
+    const res = await fetch('/api/blocks');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    state.holidays = new Set(Array.isArray(data) ? data : []);
+    return Array.isArray(data) ? data : [];
   } catch (e) {
-    console.error('休日リストCSV取得失敗:', e);
-    state.holidays = new Set();
+    console.error('予約不可リストCSV取得失敗:', e);
+    return [];
   }
 }
 
-// 改修(休日設定): 休日リストCSVへ現在のstate.holidaysの内容を全置換保存する
-async function saveHolidays() {
-  const dates = Array.from(state.holidays).sort();
+// 予約不可リストCSVに1件追記する（突合キー: room+machine+start+end）
+async function apiAppendBlock(block) {
   try {
-    await fetch('/api/holidays', {
+    await fetch('/api/blocks', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(dates),
+      body:    JSON.stringify(block),
     });
     return true;
   } catch (e) {
-    console.error('休日リストCSV保存失敗:', e);
+    console.error('予約不可リストCSV追記失敗:', e);
     return false;
   }
 }
 
-// 改修(休日期限切れ削除): 表示範囲の開始日(state.viewStart＝先月月初)より前の休日を削除する。
-// 表示範囲はリロードごとに「今日」基準で再計算され、viewStartは時間経過で一方向にしか前進しないため、
-// これより前の日付は今後二度と表示範囲に入らない（＝削除して安全）。
-// 一方viewEnd側（3か月先/年度末）は時間経過で前進していくため、現時点で範囲外の未来の休日を
-// 削除すると正当なデータを消してしまう。よって削除対象はviewStartより前のみとする。
-// サーバへの保存（CSV上書き）は事務局(isAdmin)ログイン時のみ行い、一般ユーザーの閲覧では書き込まない。
-async function pruneExpiredHolidays() {
-  const cutoff = dateToIso(state.viewStart);
-  const before = state.holidays.size;
-  state.holidays = new Set(Array.from(state.holidays).filter(iso => iso >= cutoff));
-  if (state.holidays.size !== before && isAdmin) {
-    await saveHolidays();
+// 予約不可リストCSVの該当行を削除する（予約不可の解除）
+async function apiDeleteBlock(room, machine, start, end) {
+  try {
+    const params = new URLSearchParams({ room, machine, start, end });
+    await fetch(`/api/blocks?${params}`, { method: 'DELETE' });
+    return true;
+  } catch (e) {
+    console.error('予約不可リストCSV行削除失敗:', e);
+    return false;
   }
+}
+
+// 改修(セルコメント機能追加): セルコメントリストCSV（筐体×日付単位）を取得する
+async function fetchCommentList() {
+  try {
+    const res = await fetch('/api/cell-comments');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.error('セルコメントリストCSV取得失敗:', e);
+    return [];
+  }
+}
+
+// セルコメントリストCSVへ1件upsertする（突合キー: room+machine+date。textが空文字の場合はサーバ側で削除扱い）
+async function apiSaveComment(room, machine, date, text) {
+  try {
+    await fetch('/api/cell-comments', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ room, machine, date, text }),
+    });
+    return true;
+  } catch (e) {
+    console.error('セルコメントリストCSV保存失敗:', e);
+    return false;
+  }
+}
+
+// 改修(セルコメント機能追加): セル（機種×日付）のコメントをインライン編集する（事務局のみ・かぶりは考慮しない）
+function openCellCommentEditor(td, machine, date, currentText) {
+  const iso   = dateToIso(date);
+  const room  = state.currentRoom;
+  const input = document.createElement('input');
+  input.type      = 'text';
+  input.value     = currentText;
+  input.className = 'cell-comment-edit-input';
+  td.textContent  = '';
+  td.appendChild(input);
+  input.focus();
+  input.select();
+  // 改修: 入力欄内でのmousedownがセル範囲選択(onCellMouseDown)へ伝播しないようにする
+  input.addEventListener('mousedown', e => e.stopPropagation());
+
+  async function commit() {
+    const newText = input.value.trim();
+    if (newText !== currentText) {
+      const key = `${room}|${machine}|${iso}`;
+      if (newText) state.comments[key] = newText;
+      else delete state.comments[key];
+      await apiSaveComment(room, machine, iso, newText);
+    }
+    renderCalendar();
+  }
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  { input.blur(); }
+    if (e.key === 'Escape') { renderCalendar(); }
+  });
+  input.addEventListener('blur', commit);
 }
 
 // 改修(SP連携マージ): SP列に対応する最小項目を組み立てる
@@ -999,6 +1054,9 @@ function buildResCellMap(reservations) {
       color = '#d9d9d9';
     } else if (resStatus === 'holiday') {
       color = STATUS_HOLIDAY_COLOR;
+    } else if (resStatus === 'block') {
+      // 改修(休日設定廃止→予約不可設定): 選択範囲の予約不可セル
+      color = STATUS_BLOCK_COLOR;
     } else {
       color = (res.legendId && legendMap[res.legendId])
         ? legendMap[res.legendId].color
@@ -1012,7 +1070,7 @@ function buildResCellMap(reservations) {
       // 改修(第7回): 列インデックスを dateToCol で算出
       const col  = dateToCol(d);
       if (col === null) continue;
-      // 改修(休日設定): 休日も土日と同様にバー描画をスキップする
+      // 土日はバー描画をスキップする
       if (isNonWorkday(d)) continue;
       if (firstCol === null) firstCol = col;
       lastCol = col;
@@ -1150,7 +1208,7 @@ function renderCalendar() {
   for (let col = 0; col < totalCols; col++) {
     const d    = viewDates[col];
     const wday = d.getDay();
-    // 改修(休日設定): 休日も土日と同様にグレーアウトする（曜日表示自体は実際の曜日のまま）
+    // 土日はグレーアウトする（曜日表示自体は実際の曜日のまま）
     const isWkd = isNonWorkday(d);
     const isTod = d.getFullYear() === todayY && d.getMonth() === todayM && d.getDate() === todayD;
     // 曜日表示用インデックス変換（JS: 0=日〜6=土 → WEEKDAY_JP: 0=月〜6=日）
@@ -1191,6 +1249,54 @@ function renderCalendar() {
     const tdMachine = document.createElement('td');
     tdMachine.className = 'machine-col';
     tdMachine.title     = isAdmin ? `${machine}（ダブルクリックで編集）` : machine;
+
+    // 改修(行D&D): 筐体行の並び替え用ドラッグハンドル（事務局のみ）。
+    // メイン筐体/予備の区切りをまたぐ移動は不可のため、rowIdxからセグメント（main/spare）と
+    // セグメント内ローカルindexをtrのdatasetへ保持し、dragstart/dropで参照する
+    if (isAdmin) {
+      const isSpareSeg  = rowIdx >= state.machines.length;
+      const segLocalIdx = isSpareSeg ? rowIdx - state.machines.length : rowIdx;
+      tr.dataset.seg      = isSpareSeg ? 'spare' : 'main';
+      tr.dataset.localIdx = segLocalIdx;
+
+      const dragHandle = document.createElement('span');
+      dragHandle.className   = 'row-drag-handle';
+      dragHandle.textContent = '☰';
+      dragHandle.title       = '行を並び替える（メイン筐体/予備の区切りをまたぐ移動は不可）';
+      dragHandle.draggable   = true;
+      // 改修: ハンドルのmousedownがセル範囲選択等の他のmousedownハンドラへ伝播しないようにする
+      dragHandle.addEventListener('mousedown', e => e.stopPropagation());
+      dragHandle.addEventListener('dragstart', e => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', JSON.stringify({ seg: tr.dataset.seg, localIdx: segLocalIdx }));
+      });
+      tdMachine.appendChild(dragHandle);
+
+      // ドロップ先の行（同一セグメントのみ受け入れる）
+      tr.addEventListener('dragover', e => {
+        if (!e.dataTransfer.types.includes('text/plain')) return;
+        e.preventDefault();
+        tr.classList.add('row-drag-over');
+      });
+      tr.addEventListener('dragleave', () => tr.classList.remove('row-drag-over'));
+      tr.addEventListener('drop', e => {
+        e.preventDefault();
+        tr.classList.remove('row-drag-over');
+        let payload;
+        try { payload = JSON.parse(e.dataTransfer.getData('text/plain')); } catch (_) { return; }
+        // 改修: セグメント（main/spare）が異なる場合は区切りをまたぐ移動のため無視する
+        if (!payload || payload.seg !== tr.dataset.seg) return;
+        const fromIdx = payload.localIdx;
+        const toIdx   = segLocalIdx;
+        if (fromIdx === toIdx) return;
+        const arr = (tr.dataset.seg === 'main') ? state.machines : state.spares;
+        const [moved] = arr.splice(fromIdx, 1);
+        arr.splice(toIdx, 0, moved);
+        // 改修: 予約はres.machine（筐体名文字列）で紐づくため、配列順の入替のみで自動追従する
+        if (tr.dataset.seg === 'main') saveMachines(); else saveSpares();
+        renderCalendar();
+      });
+    }
 
     const nameSpan = document.createElement('span');
     nameSpan.className   = 'machine-name';
@@ -1411,7 +1517,7 @@ function renderCalendar() {
     // 改修(第7回): 全表示期間の列（totalCols）を描画
     for (let col = 0; col < totalCols; col++) {
       const d     = viewDates[col];
-      // 改修(休日設定): 休日も土日と同様にグレーアウト・予約不可にする
+      // 土日はグレーアウト・予約不可にする
       const isWkd = isNonWorkday(d);
       const isTod = d.getFullYear() === todayY && d.getMonth() === todayM && d.getDate() === todayD;
       const cellKey = `${rowIdx}-${col}`;
@@ -1443,13 +1549,14 @@ function renderCalendar() {
         if (resInfo.status === 'spare')   td.classList.add('res-spare');
         if (resInfo.status === 'fault')   td.classList.add('res-fault');
         if (resInfo.status === 'holiday') td.classList.add('res-holiday');
+        if (resInfo.status === 'block')   td.classList.add('res-block');
         const sameLeft  = resCells[machine]?.[col - 1]?.resId === resInfo.resId;
         const sameRight = resCells[machine]?.[col + 1]?.resId === resInfo.resId;
         if (sameRight)  td.classList.add('res-join-right');
         if (!sameLeft)  td.classList.add('res-seg-left');
         if (!sameRight) td.classList.add('res-seg-right');
 
-        if (resInfo.isStart && resInfo.status !== 'holiday') {
+        if (resInfo.isStart && resInfo.status !== 'holiday' && resInfo.status !== 'block') {
           let text;
           if (resInfo.status === 'spare')      text = STATUS_SPARE_TEXT;
           else if (resInfo.status === 'fault') text = STATUS_FAULT_TEXT;
@@ -1501,32 +1608,63 @@ function renderCalendar() {
           td.appendChild(remarkEl);
         }
 
-        if (isAdmin) {
-          td.addEventListener('mousemove', e => {
-            if (_drag.active) return;
-            const rect = td.getBoundingClientRect();
-            const xIn  = e.clientX - rect.left;
-            const isL  = resInfo.isStart && xIn < EDGE_PX;
-            const isR  = resInfo.isEnd   && xIn > rect.width - EDGE_PX;
-            td.style.cursor = (isL || isR) ? 'ew-resize' : 'grab';
+        if (resInfo.status === 'block') {
+          // 改修(休日設定廃止→予約不可設定): 予約不可セルはドラッグ・選択・登録ダイアログの対象外とし、
+          // 事務局のみダブルクリックで解除できるようにする
+          if (isAdmin) {
+            td.addEventListener('dblclick', () => {
+              if (!confirm('この予約不可設定を解除しますか？')) return;
+              const res = state.reservations[resInfo.resId];
+              if (!res) return;
+              apiDeleteBlock(res.room || state.currentRoom, res.machine, res.start, res.end);
+              state.reservations.splice(resInfo.resId, 1);
+              renderCalendar();
+            });
+          }
+        } else {
+          if (isAdmin) {
+            td.addEventListener('mousemove', e => {
+              if (_drag.active) return;
+              const rect = td.getBoundingClientRect();
+              const xIn  = e.clientX - rect.left;
+              const isL  = resInfo.isStart && xIn < EDGE_PX;
+              const isR  = resInfo.isEnd   && xIn > rect.width - EDGE_PX;
+              td.style.cursor = (isL || isR) ? 'ew-resize' : 'grab';
+            });
+          }
+          td.addEventListener('mousedown', onResMouseDown);
+          td.addEventListener('click', () => {
+            if (_resMoved) return;
+            onResClick(resInfo.resId);
+          });
+          // 改修: 事務局は編集ダイアログ、使用者は閲覧専用ダイアログを開く
+          td.addEventListener('dblclick', () => {
+            if (isAdmin) {
+              openEditDialog(resInfo.resId);
+            } else {
+              openViewDialog(resInfo.resId);
+            }
           });
         }
-        td.addEventListener('mousedown', onResMouseDown);
-        td.addEventListener('click', () => {
-          if (_resMoved) return;
-          onResClick(resInfo.resId);
-        });
-        // 改修: 事務局は編集ダイアログ、使用者は閲覧専用ダイアログを開く
-        td.addEventListener('dblclick', () => {
-          if (isAdmin) {
-            openEditDialog(resInfo.resId);
-          } else {
-            openViewDialog(resInfo.resId);
-          }
-        });
-      } else if (!isWkd && isAdmin) {
-        td.addEventListener('mousedown', onCellMouseDown);
-        td.addEventListener('mouseover', onCellMouseOver);
+      } else {
+        // 改修(セルコメント機能追加): 予約が無いセルにコメントがあれば直接表示する（かぶりは考慮しない）
+        const commentKey  = `${state.currentRoom}|${machine}|${dateToIso(d)}`;
+        const commentText = state.comments[commentKey];
+        if (commentText) {
+          const commentEl = document.createElement('span');
+          commentEl.className   = 'cell-comment';
+          commentEl.textContent = commentText;
+          commentEl.title       = commentText;
+          td.appendChild(commentEl);
+        }
+        if (!isWkd && isAdmin) {
+          td.addEventListener('mousedown', onCellMouseDown);
+          td.addEventListener('mouseover', onCellMouseOver);
+        }
+        // 改修(セルコメント機能追加): 事務局はダブルクリックでコメントを入力・編集・削除できる（曜日不問）
+        if (isAdmin) {
+          td.addEventListener('dblclick', () => openCellCommentEditor(td, machine, d, commentText || ''));
+        }
       }
 
       // プレビュー上書き
@@ -1597,7 +1735,7 @@ function renderCalendar() {
     // 改修(第7回): totalCols 列分の空セルを生成
     for (let col = 0; col < totalCols; col++) {
       const d     = viewDates[col];
-      // 改修(休日設定): 休日も土日と同様にグレーアウトする
+      // 土日はグレーアウトする
       const isWkd = isNonWorkday(d);
       const addTd = document.createElement('td');
       addTd.className = 'gantt-cell machine-add-cell' + (isWkd ? ' weekend' : '');
@@ -1708,7 +1846,7 @@ function cellFromPoint(x, y) {
   return { row: parseInt(td.dataset.row), col: parseInt(td.dataset.col) };
 }
 
-// 改修(休日設定): 土日に加えて休日もスキップして直近の予約可能日を返す
+// 土日をスキップして直近の予約可能日を返す
 function nearestWeekday(date, forward) {
   const d = new Date(date);
   while (isNonWorkday(d)) {
@@ -1778,7 +1916,7 @@ function onDragResMove(e) {
   const previewCells = new Set();
   const ghostCells   = new Set();
 
-  // 改修(休日設定): 休日も土日と同様にプレビュー/ゴースト対象から除外する
+  // 土日はプレビュー/ゴースト対象から除外する
   for (let d = new Date(newStart); d <= newEnd; d.setDate(d.getDate() + 1)) {
     const c = dateToCol(d);
     if (c !== null && !isNonWorkday(d)) previewCells.add(`${newRow}-${c}`);
@@ -1917,7 +2055,7 @@ function onCellMouseOver(e) {
   state.selectedCells = new Set();
   for (let r = minRow; r <= maxRow; r++) {
     for (let c = minCol; c <= maxCol; c++) {
-      // 改修(休日設定): 土日に加えて休日も選択対象から除外する
+      // 土日は選択対象から除外する
       if (!isNonWorkday(state.viewDates[c])) state.selectedCells.add(`${r}-${c}`);
     }
   }
@@ -2161,19 +2299,7 @@ document.addEventListener('mousedown', e => {
   }
 }, true);
 
-// ────────────────────────────────────────────
-// ページナビ
-// ────────────────────────────────────────────
-document.querySelectorAll('.nav-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const page = btn.dataset.page;
-    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    document.querySelectorAll('.page').forEach(p => {
-      p.classList.toggle('active', p.id === `page-${page}`);
-    });
-  });
-});
+// 改修(ビュータブ削除): ページナビ（ビュータブのみで実質無機能だったため削除。page-viewは常時アクティブ）
 
 // 改修(第4回): ルーム切替プルダウンの change ハンドラ
 document.getElementById('room-select').addEventListener('change', e => {
@@ -2596,9 +2722,24 @@ async function patchActionAccept(itemId, acceptStatus) {
   if (!res.ok) throw new Error(`承知/辞退列の更新に失敗しました（HTTP ${res.status}）`);
 }
 
-// 改修(第14回): 承知/辞退ページのボタンハンドラ — 実処理に置換（W-9）
-// 変更依頼ボタン: 事務局アクションリストへ「期間変更」記録＋PMOへ予約内容変更依頼メール送信
-document.getElementById('accept-change-btn').addEventListener('click', async () => {
+// 改修(プルダウン化): 承知/辞退/期間変更の3ボタンを1つのプルダウン＋単一送信ボタンへ統合。
+// 各対応の処理本体は関数化して維持し、`#accept-action` の選択値で分岐して呼び出す
+const ACCEPT_ACTION_BODIES = {
+  '承知':   'accept-action-ok',
+  '辞退':   'accept-action-reject',
+  '期間変更': 'accept-action-change',
+};
+
+// プルダウンの選択に応じて対応する入力欄のみを表示する
+document.getElementById('accept-action').addEventListener('change', e => {
+  const selected = e.target.value;
+  Object.entries(ACCEPT_ACTION_BODIES).forEach(([value, id]) => {
+    document.getElementById(id).classList.toggle('hidden', value !== selected);
+  });
+});
+
+// 変更依頼: 事務局アクションリストへ「期間変更」記録＋PMOへ予約内容変更依頼メール送信
+async function runAcceptChange() {
   const reason = document.getElementById('accept-change-reason').value.trim();
   if (!reason) {
     alert('変更理由を入力してください');
@@ -2642,11 +2783,11 @@ document.getElementById('accept-change-btn').addEventListener('click', async () 
   } finally {
     hideBusy();  // 改修: 処理中オーバーレイ解除
   }
-});
+}
 
-// 承知ボタン: 事務局アクションリストへ「承知」記録＋PMOへ承知メール
+// 承知: 事務局アクションリストへ「承知」記録＋PMOへ承知メール
 // 承知時はステータス変更しない（1.仮申請受領を維持）
-document.getElementById('accept-ok-btn').addEventListener('click', async () => {
+async function runAcceptOk() {
   // URLのidはTitle値のため、SP内部IDを保持したstate.actionItemIdを使用する
   const acceptId = state.actionItemId;  // 第12回で保持したSP内部ID
   showBusy('承知処理を送信中...');  // 改修: 処理中オーバーレイ表示
@@ -2677,10 +2818,10 @@ document.getElementById('accept-ok-btn').addEventListener('click', async () => {
   } finally {
     hideBusy();  // 改修: 処理中オーバーレイ解除
   }
-});
+}
 
-// 辞退ボタン: ステータスを91.申請者取り下げに更新＋使用履歴リスト削除＋PMOへ辞退メール
-document.getElementById('accept-reject-btn').addEventListener('click', async () => {
+// 辞退: ステータスを91.申請者取り下げに更新＋使用履歴リスト削除＋PMOへ辞退メール
+async function runAcceptReject() {
   const rejectReason = document.getElementById('accept-reject-reason').value.trim();
   if (!rejectReason) {
     alert('辞退理由を入力してください');
@@ -2737,6 +2878,14 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
   } finally {
     hideBusy();  // 改修: 処理中オーバーレイ解除
   }
+}
+
+// 送信ボタン: プルダウンの選択値に応じて対応する処理を呼び出す
+document.getElementById('accept-submit-btn').addEventListener('click', () => {
+  const selected = document.getElementById('accept-action').value;
+  if (selected === '承知') runAcceptOk();
+  else if (selected === '辞退') runAcceptReject();
+  else if (selected === '期間変更') runAcceptChange();
 });
 
 function deleteReservation(resId) {
@@ -2934,93 +3083,80 @@ function closeFormPane() {
   document.getElementById('form-pane').classList.add('hidden');
   document.getElementById('extend-pane').classList.add('hidden');
   document.getElementById('cancel-pane').classList.add('hidden');  // 改修: 利用取消依頼ペインも排他非表示
-  document.getElementById('holiday-pane').classList.add('hidden');  // 改修(休日設定): 休日設定ペインも排他非表示
   document.getElementById('form-empty').classList.remove('hidden');
   // 改修: フォームモードをリセット（日付自動連動の対象外にする）
   state.formMode = null;
 }
 
 // ────────────────────────────────────────────
-// 改修(休日設定): 休日設定ダイアログ（事務局のみ・全PC共通の休日マスタを日付範囲で追加・削除する）
+// 改修(休日設定廃止→予約不可設定): 選択範囲（筐体×日付）単位で予約不可を設定する（事務局のみ）
 // ────────────────────────────────────────────
 
-// 登録済み休日一覧（昇順）をリスト表示する
-function renderHolidayList() {
-  const listEl = document.getElementById('holiday-list');
-  const dates  = Array.from(state.holidays).sort();
-  if (dates.length === 0) {
-    listEl.innerHTML = '<li class="holiday-list-empty">登録済みの休日はありません</li>';
-    return;
-  }
-  listEl.innerHTML = dates.map(iso =>
-    `<li class="holiday-list-item" data-date="${iso}">
-      <span>${iso}</span>
-      <button type="button" class="btn btn-delete holiday-del-btn" data-date="${iso}">削除</button>
-    </li>`
-  ).join('');
+// 選択中セル（state.selectedCells）を行（筐体）ごとに集約し、連続する列を区間へまとめて返す
+// 戻り値: [{ row, startCol, endCol }, ...]（行内に非連続の選択があれば複数区間に分割する）
+function selectedCellsToRanges() {
+  const colsByRow = {};
+  state.selectedCells.forEach(key => {
+    const [rowStr, colStr] = key.split('-');
+    const row = Number(rowStr);
+    (colsByRow[row] = colsByRow[row] || []).push(Number(colStr));
+  });
+  const ranges = [];
+  Object.keys(colsByRow).forEach(rowStr => {
+    const row  = Number(rowStr);
+    const cols = colsByRow[rowStr].sort((a, b) => a - b);
+    let rangeStart = cols[0];
+    let prevCol     = cols[0];
+    for (let i = 1; i < cols.length; i++) {
+      if (cols[i] === prevCol + 1) { prevCol = cols[i]; continue; }
+      ranges.push({ row, startCol: rangeStart, endCol: prevCol });
+      rangeStart = cols[i];
+      prevCol    = cols[i];
+    }
+    ranges.push({ row, startCol: rangeStart, endCol: prevCol });
+  });
+  return ranges;
 }
 
-// 休日設定ボタン — holiday-paneを開く（他ペインは排他非表示）
-document.getElementById('holiday-btn').addEventListener('click', () => {
-  document.getElementById('form-pane').classList.add('hidden');
-  document.getElementById('extend-pane').classList.add('hidden');
-  document.getElementById('cancel-pane').classList.add('hidden');
-  document.getElementById('form-empty').classList.add('hidden');
-  document.getElementById('holiday-pane').classList.remove('hidden');
-  document.getElementById('holiday-start').value = '';
-  document.getElementById('holiday-end').value   = '';
-  renderHolidayList();
-  state.formMode = null;
-});
-
-// 「範囲を追加」ボタン — 開始日〜終了日を1日ずつ展開してstate.holidaysへ追加（画面上のみ・保存は別ボタン）
-document.getElementById('holiday-add-btn').addEventListener('click', () => {
-  const startVal = document.getElementById('holiday-start').value;
-  const endVal   = document.getElementById('holiday-end').value;
-  if (!startVal || !endVal) {
-    alert('開始日・終了日を入力してください');
+// 「予約不可」ボタン — 選択範囲を予約不可セル（status:'block'の疑似予約）として登録する
+document.getElementById('blockade-btn').addEventListener('click', async () => {
+  const ranges = selectedCellsToRanges();
+  if (ranges.length === 0) {
+    alert('予約不可にするセルを選択してください');
     return;
   }
-  if (startVal > endVal) {
-    alert('終了日が開始日より前です');
-    return;
-  }
-  for (let d = isoToDate(startVal); d <= isoToDate(endVal); d.setDate(d.getDate() + 1)) {
-    state.holidays.add(dateToIso(d));
-  }
-  renderHolidayList();
-});
-
-// 一覧の「削除」ボタン — イベント委譲でstate.holidaysから除去（画面上のみ・保存は別ボタン）
-document.getElementById('holiday-list').addEventListener('click', e => {
-  const btn = e.target.closest('.holiday-del-btn');
-  if (!btn) return;
-  state.holidays.delete(btn.dataset.date);
-  renderHolidayList();
-});
-
-// 「保存」ボタン — サーバへ全置換保存し、カレンダーへ反映する
-document.getElementById('holiday-save').addEventListener('click', async () => {
-  showBusy('休日設定を保存中...');
+  showBusy('予約不可を設定中...');
   try {
-    const ok = await saveHolidays();
-    if (ok) {
-      setStatus('休日設定を保存しました。');
-      closeFormPane();
-      renderCalendar();
-    } else {
-      setStatus('休日設定の保存に失敗しました', 'red');
+    for (const { row, startCol, endCol } of ranges) {
+      const machine = getAllMachines()[row];
+      if (!machine) continue;
+      const start = dateToIso(state.viewDates[startCol]);
+      const end   = dateToIso(state.viewDates[endCol]);
+      await apiAppendBlock({ room: state.currentRoom, machine, start, end });
+      state.reservations.push({
+        spId:      null,
+        _id:       genLocalId(),
+        machine,
+        start,
+        end,
+        label:     '',
+        applicant: '',
+        color:     STATUS_BLOCK_COLOR,
+        legendId:  '',
+        status:    'block',
+        remark:    '',
+        marks:     [],
+        room:      state.currentRoom,
+      });
     }
+    state.selectedCells = new Set();
+    state.anchorCell    = null;
+    setStatus('選択範囲を予約不可に設定しました。');
+    updateInfoPanel();
+    renderCalendar();
   } finally {
     hideBusy();
   }
-});
-
-// 「キャンセル」ボタン — サーバ保存済みの内容へ戻す（未保存の追加・削除を破棄）
-document.getElementById('holiday-cancel').addEventListener('click', async () => {
-  await loadHolidays();
-  closeFormPane();
-  renderCalendar();
 });
 
 // 改修(?idなし事務局ページ対応): 現在表示中の登録ダイアログがケースピッカー対象（?id=無し新規登録）かどうか。
@@ -3077,7 +3213,7 @@ function showDialog(title, data, mode, resId = null) {
     </div>
     <div class="form-row">
       <label>状態:</label>
-      <!-- 改修(休日設定): 休日は状態選択肢から除外し、専用の「休日設定」ダイアログで日付ベースに管理する -->
+      <!-- 改修(休日設定廃止): 休日状態は選択肢に含めない（作成手段がなく現在は選択不可。予約不可設定に統合済み） -->
       <select id="f-status">
         <option value="normal"${(data.status || 'normal') === 'normal' ? ' selected' : ''}>通常</option>
         <option value="spare"${data.status === 'spare' ? ' selected' : ''}>予備日</option>
@@ -3822,8 +3958,8 @@ async function init() {
 
   document.getElementById('user-name').textContent = isAdmin ? '事務局' : 'ユーザー';
   if (!isAdmin) document.getElementById('register-btn').classList.add('hidden');
-  // 改修(休日設定): 休日設定ボタンは事務局のみ表示する
-  if (!isAdmin) document.getElementById('holiday-btn').classList.add('hidden');
+  // 改修(休日設定廃止→予約不可設定): 予約不可ボタンは事務局のみ表示する
+  if (!isAdmin) document.getElementById('blockade-btn').classList.add('hidden');
 
   // 改修(ドラッグリサイズ対応): 保存済みのサイドパネル幅があれば復元する。
   // ここで幅を確定させておくことで、後続のrenderCalendar()内のapplyDateColWidth()が
@@ -3832,9 +3968,6 @@ async function init() {
   if (savedSidePanelWidth != null) {
     document.getElementById('side-panel').style.width = savedSidePanelWidth + 'px';
   }
-
-  // 改修(休日設定): サーバから全PC共通の休日マスタを取得し、以降のグレーアウト判定に使う
-  await loadHolidays();
 
   // 改修(第12回): URLクエリパラメータから仮IDを受取り、SPからアクションリスト行を取得（W-2）
   const _actionId = _urlParams.get('id');  // 事務局アクションリストの仮ID
@@ -4038,6 +4171,34 @@ async function init() {
     saveReservations(state.reservations);
   }
 
+  // 改修(休日設定廃止→予約不可設定): 予約不可リストCSVを取得し、status:'block'の疑似予約として反映する
+  // 西/南いずれのルームにも対応するため、行ごとに保持しているroomをそのまま使う（機種の動的追加は行わない）
+  const blockList = await fetchBlockList();
+  if (blockList.length > 0) {
+    state.reservations = state.reservations.concat(blockList.map(b => ({
+      spId:      null,
+      _id:       genLocalId(),
+      machine:   b.machine,
+      start:     b.start,
+      end:       b.end,
+      label:     '',
+      applicant: '',
+      color:     STATUS_BLOCK_COLOR,
+      legendId:  '',
+      status:    'block',
+      remark:    '',
+      marks:     [],
+      room:      b.room || 'west',
+    })));
+  }
+
+  // 改修(セルコメント機能追加): セルコメントリストCSVを取得し、`${room}|${machine}|${date}` キーのマップへ格納する
+  const commentList = await fetchCommentList();
+  state.comments = {};
+  commentList.forEach(c => {
+    state.comments[`${c.room}|${c.machine}|${c.date}`] = c.text;
+  });
+
   // 改修: アドレス列は南HILSルームのみ表示。初回renderCalendar前にクラスを確定させる
   applyAddressVisibility(state.currentRoom);
   // 改修: 担当者列チェックボックスの初期状態を保存済みユーザー設定へ復元してから、
@@ -4052,8 +4213,6 @@ async function init() {
 
   // 改修(第7回): 表示期間を初期化してからカレンダーを描画し、今日へ自動スクロール
   initViewRange();
-  // 改修(休日期限切れ削除): viewStart確定後に期限切れ休日を削除（レンダリング前に反映させる）
-  await pruneExpiredHolidays();
   renderCalendar();
   scrollToDate(new Date());
   // 改修(第7回追補): ウィンドウリサイズ時に日付列幅を自動再計算（一度だけ登録）

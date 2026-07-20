@@ -26,7 +26,7 @@ const CSV_DATA_DIR = path.join(__dirname, '../CSVデータ');
 const CSV_PATH     = process.env.LEGEND_CSV_PATH || path.join(CSV_DATA_DIR, '凡例色リスト.csv');
 const CSV_MAX_ROWS = parseInt(process.env.LEGEND_CSV_MAX || '500', 10);
 
-// 改修(状態分離): 予備日/設備故障を記録する状態リストCSVのパス（休日はHOLIDAY_CSV_PATHへ分離済み）
+// 改修(状態分離): 予備日/設備故障を記録する状態リストCSVのパス（休日設定は廃止し予約不可設定へ統合済み）
 // 通常予約は凡例色リストCSV、非通常（予備日/設備故障）は本CSVに分離して記録する
 const STATUS_CSV_PATH = process.env.STATUS_CSV_PATH || path.join(CSV_DATA_DIR, '状態リスト.csv');
 
@@ -38,9 +38,14 @@ const MACHINE_CSV_FILES = { west: '筐体一覧_west.csv', south: '筐体一覧_
 // 改修(凡例共通化): 凡例マスタCSV（全ルーム共通・単一ファイル）のパス
 const LEGEND_MASTER_PATH = process.env.LEGEND_MASTER_PATH || path.join(CSV_DATA_DIR, '凡例マスタ.csv');
 
-// 改修(休日設定): 休日リストCSV（全ルーム共通・単一ファイル・日付のみ）のパス
-// 休日は筐体に依存しないため凡例マスタと同じ「配列全置換」方式で管理する
-const HOLIDAY_CSV_PATH = process.env.HOLIDAY_CSV_PATH || path.join(CSV_DATA_DIR, '休日リスト.csv');
+// 改修(休日設定廃止→予約不可設定): 休日リストCSV（日付単位・全筐体共通）は廃止。
+// 代わりにセル範囲（筐体×日付）単位で予約不可を管理する予約不可リストCSVを新設する
+// CSVスキーマ（4列）: room, machine, start, end
+const BLOCK_CSV_PATH = process.env.BLOCK_CSV_PATH || path.join(CSV_DATA_DIR, '予約不可リスト.csv');
+
+// 改修(セルコメント機能追加): セル（筐体×日付）に紐づくコメントを記録するCSVのパス
+// CSVスキーマ（4列）: room, machine, date, text
+const COMMENT_CSV_PATH = process.env.COMMENT_CSV_PATH || path.join(CSV_DATA_DIR, 'セルコメントリスト.csv');
 
 // 改修(マニュアルHTTP配信): マニュアルPDFの配信元ディレクトリ
 // 本番はWebアプリ階層が無くbackendの一つ上が直接マニュアル\のため既定値でそのまま正しい
@@ -584,26 +589,82 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 改修(休日設定): GET /api/holidays — 休日リストCSVをISO日付文字列の配列で返す（全PC共通）
-  // CSV未作成時は空配列を返す（凡例マスタと異なり初期シードは不要）
-  if (pathname === '/api/holidays' && method === 'GET') {
+  // 改修(休日設定廃止→予約不可設定): GET /api/blocks — 予約不可リストCSVを配列として返す
+  if (pathname === '/api/blocks' && method === 'GET') {
     try {
-      jsonOk(res, parseHolidayList());
+      jsonOk(res, parseBlockList());
     } catch (e) {
-      console.error('GET /api/holidays:', e.message);
+      console.error('GET /api/blocks:', e.message);
       jsonErr(res, 500, e.message);
     }
     return;
   }
 
-  // 改修(休日設定): POST /api/holidays — 休日リストCSVを配列全置換で保存（全PC共通）
-  if (pathname === '/api/holidays' && method === 'POST') {
+  // 改修(休日設定廃止→予約不可設定): POST /api/blocks — 予約不可リストCSVに1件追記する
+  // 突合キー: room+machine+start+end（同一キーがあれば上書き、無ければ追記）
+  if (pathname === '/api/blocks' && method === 'POST') {
     try {
       const body = await readBody(req);
-      writeHolidayList(Array.isArray(body) ? body : (body.holidays || []));
+      appendBlock(body);
       jsonOk(res, { success: true });
     } catch (e) {
-      console.error('POST /api/holidays:', e.message);
+      console.error('POST /api/blocks:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(休日設定廃止→予約不可設定): DELETE /api/blocks?room=&machine=&start=&end= — 該当行を削除（解除）
+  if (pathname === '/api/blocks' && method === 'DELETE') {
+    try {
+      const room    = urlObj.searchParams.get('room')    || '';
+      const machine = urlObj.searchParams.get('machine') || '';
+      const start   = urlObj.searchParams.get('start')   || '';
+      const end     = urlObj.searchParams.get('end')     || '';
+      deleteBlock(room, machine, start, end);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('DELETE /api/blocks:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(セルコメント機能追加): GET /api/cell-comments — セルコメントリストCSVを配列として返す
+  if (pathname === '/api/cell-comments' && method === 'GET') {
+    try {
+      jsonOk(res, parseCommentList());
+    } catch (e) {
+      console.error('GET /api/cell-comments:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(セルコメント機能追加): POST /api/cell-comments — セルコメントリストCSVへ1件upsertする
+  // 突合キー: room+machine+date。text が空文字の場合は該当行を削除する
+  if (pathname === '/api/cell-comments' && method === 'POST') {
+    try {
+      const body = await readBody(req);
+      upsertComment(body);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('POST /api/cell-comments:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
+  // 改修(セルコメント機能追加): DELETE /api/cell-comments?room=&machine=&date= — 該当行を削除
+  if (pathname === '/api/cell-comments' && method === 'DELETE') {
+    try {
+      const room    = urlObj.searchParams.get('room')    || '';
+      const machine = urlObj.searchParams.get('machine') || '';
+      const date    = urlObj.searchParams.get('date')    || '';
+      deleteComment(room, machine, date);
+      jsonOk(res, { success: true });
+    } catch (e) {
+      console.error('DELETE /api/cell-comments:', e.message);
       jsonErr(res, 500, e.message);
     }
     return;
@@ -959,42 +1020,133 @@ function writeLegendMaster(legend) {
 }
 
 // ────────────────────────────────────────────
-// 改修(休日設定): 休日リストCSV ヘルパー（全ルーム共通・単一ファイル・配列全置換方式）
-// CSVスキーマ（1列）: date（ISO形式 YYYY-MM-DD）
-// 事務局が設定した休日は全PC共通で反映するため、凡例マスタと同じ全置換方式で管理する
+// 改修(休日設定廃止→予約不可設定): 予約不可リストCSV ヘルパー
+// CSVスキーマ（4列）: room, machine, start, end（start/endはISO形式 YYYY-MM-DD）
+// 選択範囲（筐体×日付）単位で予約不可を管理する。突合キー: room+machine+start+end
 // ────────────────────────────────────────────
 
-// 休日リストCSVを読み込み、ISO日付文字列の配列を返す
-// ファイルが存在しない場合は空配列を返す（凡例マスタと異なり初期シードは不要）
-function parseHolidayList() {
+// 予約不可リストCSVを読み込み {room,machine,start,end} の配列を返す（ファイル無しは[]）
+function parseBlockList() {
   let raw;
   try {
-    raw = fs.readFileSync(HOLIDAY_CSV_PATH, 'utf8');
+    raw = fs.readFileSync(BLOCK_CSV_PATH, 'utf8');
   } catch (_) {
     return [];
   }
   // UTF-8 BOM（U+FEFF）を除去してから分割
   const lines = raw.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim() !== '');
   if (lines.length < 2) return [];
-  const dates = [];
+  const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const vals = splitCsvLine(lines[i]);
-    const d = unquote(vals[0] || '');
-    if (d) dates.push(d);
+    rows.push({
+      room:    unquote(vals[0] || ''),
+      machine: unquote(vals[1] || ''),
+      start:   unquote(vals[2] || ''),
+      end:     unquote(vals[3] || ''),
+    });
   }
-  return dates;
+  return rows;
 }
 
-// 休日リスト（ISO日付文字列の配列）をCSVへ全置換保存する。重複除去・昇順ソートしてから書き込む
-function writeHolidayList(dates) {
+// {room,machine,start,end} の配列をCSVへ全置換保存する
+function writeBlockList(rows) {
   // 格納先フォルダが無ければ作成（初回起動時）
-  fs.mkdirSync(path.dirname(HOLIDAY_CSV_PATH), { recursive: true });
-  const rows = Array.from(new Set(Array.isArray(dates) ? dates : [])).sort();
-  const headerLine = quoteVal('date');
-  const dataLines  = rows.map(d => quoteVal(d));
+  fs.mkdirSync(path.dirname(BLOCK_CSV_PATH), { recursive: true });
+  const headerLine = ['room', 'machine', 'start', 'end'].map(quoteVal).join(',');
+  const dataLines  = rows.map(r => [r.room, r.machine, r.start, r.end].map(quoteVal).join(','));
   // UTF-8 BOMを先頭に付与（日本語Windowsのアプリが文字化けしないよう）
   const bom = '﻿';
-  fs.writeFileSync(HOLIDAY_CSV_PATH, bom + [headerLine, ...dataLines].join('\r\n') + '\r\n', 'utf8');
+  fs.writeFileSync(BLOCK_CSV_PATH, bom + [headerLine, ...dataLines].join('\r\n') + '\r\n', 'utf8');
+}
+
+// 突合キー: room+machine+start+end。同一キーがあれば上書き、無ければ追記する
+function appendBlock(row) {
+  const rows = parseBlockList();
+  const newRow = {
+    room:    row.room    || '',
+    machine: row.machine || '',
+    start:   (row.start  || '').split('T')[0],
+    end:     (row.end    || '').split('T')[0],
+  };
+  const key = r => `${r.room}|${r.machine}|${r.start}|${r.end}`;
+  const idx = rows.findIndex(r => key(r) === key(newRow));
+  if (idx >= 0) rows[idx] = newRow;
+  else rows.push(newRow);
+  writeBlockList(rows);
+}
+
+// 突合キー: room+machine+start+end の行を削除して書き戻す（該当無しは何もしない）
+function deleteBlock(room, machine, start, end) {
+  const rows     = parseBlockList();
+  const key      = `${room}|${machine}|${start}|${end}`;
+  const filtered = rows.filter(r => `${r.room}|${r.machine}|${r.start}|${r.end}` !== key);
+  if (filtered.length !== rows.length) writeBlockList(filtered);
+}
+
+// ────────────────────────────────────────────
+// 改修(セルコメント機能追加): セルコメントリストCSV ヘルパー
+// CSVスキーマ（4列）: room, machine, date, text（dateはISO形式 YYYY-MM-DD）
+// 突合キー: room+machine+date。予約の有無・重なりは考慮しない
+// ────────────────────────────────────────────
+
+// セルコメントリストCSVを読み込み {room,machine,date,text} の配列を返す（ファイル無しは[]）
+function parseCommentList() {
+  let raw;
+  try {
+    raw = fs.readFileSync(COMMENT_CSV_PATH, 'utf8');
+  } catch (_) {
+    return [];
+  }
+  const lines = raw.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim() !== '');
+  if (lines.length < 2) return [];
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const vals = splitCsvLine(lines[i]);
+    rows.push({
+      room:    unquote(vals[0] || ''),
+      machine: unquote(vals[1] || ''),
+      date:    unquote(vals[2] || ''),
+      text:    unquote(vals[3] || ''),
+    });
+  }
+  return rows;
+}
+
+// {room,machine,date,text} の配列をCSVへ全置換保存する
+function writeCommentList(rows) {
+  fs.mkdirSync(path.dirname(COMMENT_CSV_PATH), { recursive: true });
+  const headerLine = ['room', 'machine', 'date', 'text'].map(quoteVal).join(',');
+  const dataLines  = rows.map(r => [r.room, r.machine, r.date, r.text].map(quoteVal).join(','));
+  const bom = '﻿';
+  fs.writeFileSync(COMMENT_CSV_PATH, bom + [headerLine, ...dataLines].join('\r\n') + '\r\n', 'utf8');
+}
+
+// 突合キー: room+machine+date。上書き保存する。text が空文字の場合は該当行を削除する
+function upsertComment(row) {
+  const rows = parseCommentList();
+  const room    = row.room    || '';
+  const machine = row.machine || '';
+  const date    = (row.date   || '').split('T')[0];
+  const text    = row.text    || '';
+  const key = r => `${r.room}|${r.machine}|${r.date}`;
+  const targetKey = `${room}|${machine}|${date}`;
+  const filtered  = rows.filter(r => key(r) !== targetKey);
+  if (text.trim() === '') {
+    // 空文字保存はコメント削除とみなす
+    writeCommentList(filtered);
+    return;
+  }
+  filtered.push({ room, machine, date, text });
+  writeCommentList(filtered);
+}
+
+// 突合キー: room+machine+date の行を削除して書き戻す（該当無しは何もしない）
+function deleteComment(room, machine, date) {
+  const rows     = parseCommentList();
+  const key      = `${room}|${machine}|${date}`;
+  const filtered = rows.filter(r => `${r.room}|${r.machine}|${r.date}` !== key);
+  if (filtered.length !== rows.length) writeCommentList(filtered);
 }
 
 // 改修(第13回): SP列名変換を南HILSルーム 統合HILS使用履歴リストの実内部名に差替え

@@ -9,38 +9,22 @@
 <body>
 <div id="app">
 
-  <!-- トップバー -->
-  <header class="topbar">
-    <!-- 改修: フォーム・申請画面タブは骨組み（未実装）のため削除。ビューのみ残す -->
-    <nav class="nav-tabs">
-      <button class="nav-btn mid-tab active" data-page="view">ビュー</button>
-    </nav>
-    <div class="status-area">
-      <span id="status-msg" class="status-msg hidden"></span>
-    </div>
-    <!-- 改修: マニュアルボタン（トップバー右側・ユーザー名表示の左）PDF未配置期間はステータス欄に通知 -->
-    <button id="manual-btn" class="btn btn-manual">マニュアル</button>
-    <!-- 改修: HEMS地図リンク（別タブで開く。JSでの制御は不要） -->
-    <a id="map-btn" class="btn btn-manual" href="http://172.25.7.82:5173/map" target="_blank" rel="noopener">地図</a>
-    <div class="user-area">
-      <span id="user-name"></span>
-    </div>
-  </header>
-
   <!-- ページコンテンツ -->
   <main class="page-content">
 
     <!-- ビューページ（ガントチャート） -->
     <div id="page-view" class="page active">
+      <!-- 改修(トップバー廃止): ビュータブ削除に伴い、トップバー(header.topbar)の全要素（ステータス表示・
+           マニュアル・地図・ユーザー名）を本行(cal-nav)へ移設した。トップバー削除でできる最上部の空行は無くなる -->
       <div class="cal-nav">
         <button id="prev-btn"     class="btn btn-nav">◀ 前月</button>
         <span   id="month-label"  class="month-label"></span>
         <button id="next-btn"     class="btn btn-nav">次月 ▶</button>
         <button id="today-btn"    class="btn btn-today">今月</button>
         <button id="register-btn" class="btn btn-register">＋ 登録</button>
-        <!-- 改修(休日設定): 休日設定ボタン（事務局のみ表示・非事務局はJSで隠す） -->
-        <!-- 改修(色調整): 登録ボタン(緑)と同色で見分けづらかったため専用色(インディゴ)に変更 -->
-        <button id="holiday-btn" class="btn btn-holiday">休日設定</button>
+        <!-- 改修(休日設定廃止→予約不可設定): 選択範囲（筐体×日付）を予約不可にするボタン（事務局のみ表示・非事務局はJSで隠す） -->
+        <!-- 改修(色調整): 登録ボタン(緑)と同色で見分けづらかったため専用色(インディゴ)を継続使用 -->
+        <button id="blockade-btn" class="btn btn-blockade">予約不可</button>
         <!-- 改修: スクショ機能（📷保存ボタン）は削除 -->
         <!-- 改修(第4回): 西/南HILSルーム切替プルダウン -->
         <!-- 改修: 設置場所（61号棟3F）をルーム名に併記 -->
@@ -50,6 +34,15 @@
         </select>
         <!-- 改修: 担当者列の表示/非表示チェックボックス -->
         <label class="assignee-toggle"><input type="checkbox" id="assignee-visible-chk" checked> 担当者列</label>
+        <!-- 改修(トップバー廃止): 旧トップバーの要素をここへ移設（status-areaがflex:1のスペーサとなり右寄せする） -->
+        <div class="status-area">
+          <span id="status-msg" class="status-msg hidden"></span>
+        </div>
+        <button id="manual-btn" class="btn btn-manual">マニュアル</button>
+        <a id="map-btn" class="btn btn-manual" href="http://172.25.7.82:5173/map" target="_blank" rel="noopener">地図</a>
+        <div class="user-area">
+          <span id="user-name"></span>
+        </div>
       </div>
       <div class="view-body">
         <div class="gantt-wrapper">
@@ -124,33 +117,6 @@
               </div>
             </div>
           </div>
-          <!-- 改修(休日設定): 休日設定フォーム（事務局のみ。全PC共通の休日マスタを日付範囲で追加・削除する） -->
-          <div id="holiday-pane" class="form-pane hidden">
-            <div class="form-pane-header"><span>休日設定</span></div>
-            <div class="form-pane-body">
-              <div class="form-row">
-                <label>開始日:</label>
-                <input type="date" id="holiday-start">
-              </div>
-              <div class="form-row">
-                <label>終了日:</label>
-                <input type="date" id="holiday-end">
-              </div>
-              <div class="form-row">
-                <button id="holiday-add-btn" type="button" class="btn btn-ok">範囲を追加</button>
-              </div>
-              <div class="form-row">
-                <label>登録済み休日:</label>
-              </div>
-              <ul id="holiday-list" class="holiday-list"></ul>
-            </div>
-            <div class="form-pane-footer">
-              <div class="dialog-footer-right">
-                <button id="holiday-cancel" class="btn btn-cancel">キャンセル</button>
-                <button id="holiday-save" class="btn btn-ok">保存</button>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
       <div id="info-panel" class="info-panel">
@@ -189,53 +155,59 @@
           </table>
         </div>
 
-        <!-- 予約内容変更依頼フォーム（承知前に内容を変更したい場合） -->
+        <!-- 改修(プルダウン化): 承知/辞退/期間変更の3ボタン構成をプルダウン＋単一送信ボタンへ統合。
+             内部値・メール文面・SP列更新（承知/辞退/期間変更）は既存のまま。初期選択は「承知」 -->
         <div class="accept-card">
-          <h3 class="accept-card-title">予約内容を変更する場合</h3>
-          <p class="accept-note">変更が必要な場合は以下を入力してPMOへ変更依頼を送信してください。</p>
+          <h3 class="accept-card-title">対応を選択してください</h3>
           <div class="form-row">
-            <label>使用開始日:</label>
-            <input type="date" id="accept-new-start">
+            <label>対応:</label>
+            <select id="accept-action">
+              <option value="承知" selected>承知する</option>
+              <option value="辞退">辞退する</option>
+              <option value="期間変更">予約内容を変更する</option>
+            </select>
           </div>
-          <div class="form-row">
-            <label>使用終了日:</label>
-            <input type="date" id="accept-new-end">
-          </div>
-          <div class="form-row">
-            <label>変更理由（必須）:</label>
-            <textarea id="accept-change-reason" rows="3" placeholder="変更理由を入力してください"></textarea>
-          </div>
-          <div class="accept-card-footer">
-            <button id="accept-change-btn" class="btn btn-ok">変更依頼を送信</button>
-          </div>
-        </div>
 
-        <!-- 承知ブロック -->
-        <div class="accept-card">
-          <h3 class="accept-card-title">承知する</h3>
-          <!-- 改修: 利用終了時の対応事項（利用終了報告ボタン押下・初期状態復帰確認）を承知前に周知 -->
-          <p class="accept-note accept-warning">
-            利用終了時には、使用者が利用終了報告ボタンを押下して、事務局に報告してください。<br>
-            ※HILSの初期状態復帰が確認できない場合、処理依頼、または次回以降の貸出しを禁止することがあります。
-          </p>
-          <div class="form-row">
-            <label>理由（任意）:</label>
-            <textarea id="accept-ok-reason" rows="2" placeholder="任意入力"></textarea>
+          <!-- 承知時の入力欄（初期表示） -->
+          <div id="accept-action-ok" class="accept-action-body">
+            <!-- 改修: 利用終了時の対応事項（利用終了報告ボタン押下・初期状態復帰確認）を承知前に周知 -->
+            <p class="accept-note accept-warning">
+              利用終了時には、使用者が利用終了報告ボタンを押下して、事務局に報告してください。<br>
+              ※HILSの初期状態復帰が確認できない場合、処理依頼、または次回以降の貸出しを禁止することがあります。
+            </p>
+            <div class="form-row">
+              <label>理由（任意）:</label>
+              <textarea id="accept-ok-reason" rows="2" placeholder="任意入力"></textarea>
+            </div>
           </div>
-          <div class="accept-card-footer">
-            <button id="accept-ok-btn" class="btn btn-ok">承知</button>
-          </div>
-        </div>
 
-        <!-- 辞退ブロック -->
-        <div class="accept-card accept-card-reject">
-          <h3 class="accept-card-title">辞退する</h3>
-          <div class="form-row">
-            <label>辞退理由（必須）:</label>
-            <textarea id="accept-reject-reason" rows="2" placeholder="辞退理由を入力してください（必須）"></textarea>
+          <!-- 辞退時の入力欄 -->
+          <div id="accept-action-reject" class="accept-action-body hidden">
+            <div class="form-row">
+              <label>辞退理由（必須）:</label>
+              <textarea id="accept-reject-reason" rows="2" placeholder="辞退理由を入力してください（必須）"></textarea>
+            </div>
           </div>
+
+          <!-- 期間変更時の入力欄 -->
+          <div id="accept-action-change" class="accept-action-body hidden">
+            <p class="accept-note">変更が必要な場合は以下を入力してPMOへ変更依頼を送信してください。</p>
+            <div class="form-row">
+              <label>使用開始日:</label>
+              <input type="date" id="accept-new-start">
+            </div>
+            <div class="form-row">
+              <label>使用終了日:</label>
+              <input type="date" id="accept-new-end">
+            </div>
+            <div class="form-row">
+              <label>変更理由（必須）:</label>
+              <textarea id="accept-change-reason" rows="3" placeholder="変更理由を入力してください"></textarea>
+            </div>
+          </div>
+
           <div class="accept-card-footer">
-            <button id="accept-reject-btn" class="btn btn-delete">辞退</button>
+            <button id="accept-submit-btn" class="btn btn-ok">送信</button>
           </div>
         </div>
 

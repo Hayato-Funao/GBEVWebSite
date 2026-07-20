@@ -1,6 +1,7 @@
 /* ── リセット & ベース ── */
 * { box-sizing: border-box; margin: 0; padding: 0; }
-/* 改修(表拡大): 全体1.5倍化。ただしトップバー（.topbar配下）は対象外のため個別に現状維持している */
+/* 改修(表拡大): 全体1.5倍化。ただし旧トップバー由来のマニュアル/地図ボタン・ステータス表示・ユーザー名表示は
+   （現在は.cal-nav内に配置）対象外のため、.cal-nav .btn-manual等で個別に現状維持している */
 body {
   font-family: 'Meiryo UI', 'Meiryo', 'メイリオ', sans-serif;
   font-size: 20px;
@@ -15,42 +16,8 @@ body {
   height: 100vh;
 }
 
-/* ── トップバー（改修(表拡大)の対象外。サイズは現状維持） ── */
-.topbar {
-  display: flex;
-  align-items: center;
-  height: 46px;
-  background: #f1f5f9;
-  padding: 0 10px;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.nav-tabs {
-  display: flex;
-  background: #e2e8f0;
-  border: 1px solid #94a3b8;
-  border-radius: 6px;
-  padding: 2px;
-  box-shadow: 2px 2px 6px rgba(0,0,0,0.15);
-}
-
-.nav-btn {
-  background: transparent;
-  border: none;
-  padding: 0 18px;
-  height: 28px;
-  font: bold 12px 'Meiryo UI', sans-serif;
-  color: #374151;
-  cursor: pointer;
-  transition: background 0.12s;
-}
-.left-tab  { border-radius: 4px 0 0 4px; }
-.mid-tab   { border-radius: 0; }
-.right-tab { border-radius: 0 4px 4px 0; }
-.nav-btn:hover { background: #cbd5e1; }
-.nav-btn.active { background: #1d4ed8; color: #fff; }
-.nav-btn.active:hover { background: #1e40af; }
+/* 改修(トップバー廃止・ビュータブ削除): .topbar/.nav-tabs/.nav-btn（ビュータブ）は削除。
+   status-area・user-areaは.cal-nav内へ移設して継続使用する */
 
 .status-area { flex: 1; }
 
@@ -71,7 +38,7 @@ body {
   font-size: 11px;
 }
 
-/* ── 汎用ボタン（トップバーのマニュアル/地図ボタンが依存するため現状維持。
+/* ── 汎用ボタン（マニュアル/地図ボタンが依存するため現状維持。
      ガント側の各ボタンは個別クラスで高さ/フォントを上書きしているため影響しない） ── */
 .btn {
   border: none;
@@ -90,9 +57,9 @@ body {
 .btn-today:hover { background: #0e7490; }
 .btn-register { background: #16a34a; color: #fff; }
 .btn-register:hover { background: #15803d; }
-/* 改修(休日設定ボタン色調整): 登録ボタン(緑)と隣接して見分けづらいため専用色に分離 */
-.btn-holiday  { background: #4f46e5; color: #fff; }
-.btn-holiday:hover { background: #4338ca; }
+/* 改修(休日設定廃止→予約不可設定): 登録ボタン(緑)と隣接して見分けづらいため専用色に分離（色は継続使用） */
+.btn-blockade  { background: #4f46e5; color: #fff; }
+.btn-blockade:hover { background: #4338ca; }
 /* 改修(表拡大): height26→39, font-size10→15（トップバー以外のボタンは1.5倍化の対象） */
 .btn-edit     { background: #475569; color: #fff; height: 39px; font-size: 15px; }
 .btn-edit:hover { background: #334155; }
@@ -103,7 +70,8 @@ body {
 /* 改修(第6回): 延長申請ボタン */
 .btn-extend       { background: #0891b2; color: #fff; height: 39px; font-size: 15px; }
 .btn-extend:hover { background: #0e7490; }
-/* 改修: マニュアルボタン（トップバー右側。改修(表拡大)の対象外） */
+/* 改修: マニュアルボタン（現在は.cal-nav右側に配置。改修(表拡大)の対象外。
+   サイズ維持のための.cal-nav .btn-manual上書きは.cal-nav定義側に記載） */
 .btn-manual       { background: #475569; color: #fff; }
 .btn-manual:hover { background: #334155; }
 /* 改修: HEMS地図リンク（<a>タグに.btnを適用するため、button相当の見た目に補正） */
@@ -174,13 +142,21 @@ body {
   flex-shrink: 0;
 }
 
-/* 改修(表拡大): .cal-nav配下のボタン（前月/次月/今月/＋登録/休日設定）は基底.btnのサイズを使うが、
-   基底.btn自体はトップバーのマニュアル/地図ボタンが共用するため変更できない。
+/* 改修(表拡大): .cal-nav配下のボタン（前月/次月/今月/＋登録/予約不可）は基底.btnのサイズを使うが、
+   基底.btn自体はマニュアル/地図ボタンが共用するため変更できない。
    スコープを.cal-nav配下に限定した上書きルールで1.5倍化する（height28→42, font11→16, padding0 14px→0 21px） */
 .cal-nav .btn {
   height: 42px;
   font-size: 16px;
   padding: 0 21px;
+}
+
+/* 改修(トップバー廃止): マニュアル/地図ボタンを.cal-nav内へ移設したが、テキスト・ボタンサイズは変更しないため
+   直上の.cal-nav .btn（1.5倍化）を打ち消し、基底.btnと同じサイズに戻す */
+.cal-nav .btn-manual {
+  height: 28px;
+  font-size: 11px;
+  padding: 0 14px;
 }
 
 .month-label {
@@ -480,6 +456,21 @@ body {
     0 0 2px #fff;
 }
 
+/* 改修(セルコメント機能追加): 予約が無いセルに直接表示する小さめのコメントテキスト（かぶりは考慮しない） */
+.cell-comment {
+  position: absolute;
+  left: 3px;
+  bottom: 1px;
+  right: 3px;
+  font-size: 11px;
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 1;
+}
+
 /* 環境名インライン編集用入力フィールド（行ヘッダーダブルクリック時に表示） */
 /* 改修(表拡大): height24→36, font11→16 */
 .machine-edit-input {
@@ -507,6 +498,19 @@ body {
   background: #fff;
   outline: 2px solid #bae6fd;   /* フォーカス枠を視認しやすくする */
   outline-offset: 1px;
+}
+
+/* 改修(セルコメント機能追加): セルコメントのインライン編集用入力フィールド（空セルダブルクリック時に表示） */
+.cell-comment-edit-input {
+  width: 100%;
+  height: 100%;
+  border: 1.5px solid #4f46e5;
+  border-radius: 2px;
+  padding: 1px 3px;
+  font-size: 11px;
+  color: #1e293b;
+  background: #fff;
+  outline: none;
 }
 
 /* ── 選択情報パネル ── */
@@ -831,26 +835,6 @@ body {
 .form-pane-footer .btn-terminate {
   border-radius: 8px; padding: 0 14px; height: 46px; font-size: 13px;
 }
-/* 改修(休日設定): 休日設定ダイアログの登録済み休日一覧 */
-.holiday-list {
-  list-style: none;
-  margin: 9px 0 0;
-  padding: 0;
-}
-/* 改修(表拡大): padding4px6px→6px9px, font12→18 */
-.holiday-list-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 9px;
-  border-bottom: 1px solid #e2e8f0;
-  font-size: 18px;
-}
-.holiday-list-empty {
-  color: #94a3b8;
-  font-size: 18px;
-  padding: 6px 9px;
-}
 /* 改修(表拡大): font11→16 */
 .legend-title {
   font: bold 16px 'Meiryo UI', sans-serif;
@@ -1046,6 +1030,20 @@ body {
 .gantt-table td.machine-col:hover .machine-del-btn { opacity: 1; }
 .machine-del-btn:hover { background: #fca5a5; color: #dc2626; opacity: 1 !important; }
 
+/* 改修(行D&D): 筐体行の並び替え用ドラッグハンドル（事務局のみ表示・機種名の左に配置） */
+.row-drag-handle {
+  display: inline-block;
+  cursor: grab;
+  margin-right: 6px;
+  color: #94a3b8;
+  user-select: none;
+}
+.row-drag-handle:hover { color: #475569; }
+/* ドラッグ中、ドロップ先候補の行を強調表示する（同グループ内のみドロップ可） */
+.gantt-table tr.row-drag-over td {
+  box-shadow: inset 0 2px 0 #4f46e5, inset 0 -2px 0 #4f46e5;
+}
+
 /* 改修: 筐体追加行（筐体Tの下の「＋」ボタン行）
    背景色は指定しない → machine-col は .gantt-table td.machine-col (#e2e8f0)、
    日付セルは .gantt-table td.gantt-cell (#fff) のスタイルをそのまま適用する */
@@ -1115,6 +1113,19 @@ body {
 /* 改修(第4回): 休日バー（土日と同じグレー・ラベルなし） */
 .gantt-table td.gantt-cell.res-holiday {
   background-color: #c8c8c8 !important;
+}
+
+/* 改修(休日設定廃止→予約不可設定): 予約不可バー（斜線パターンでres-faultと区別。ラベルなし・クリック不可） */
+.gantt-table td.gantt-cell.res-block {
+  background-color: #9ca3af !important;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    #6b7280 0,
+    #6b7280 3px,
+    #9ca3af 3px,
+    #9ca3af 8px
+  ) !important;
+  cursor: not-allowed;
 }
 
 /* 改修(第4回): ルーム切替プルダウン */
