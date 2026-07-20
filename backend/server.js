@@ -974,10 +974,11 @@ function writeHolidayList(dates) {
   fs.writeFileSync(HOLIDAY_CSV_PATH, bom + [headerLine, ...dataLines].join('\r\n') + '\r\n', 'utf8');
 }
 
-// 改修(第13回): SP列名変換を統合HILS使用履歴リストの実内部名に差替え
+// 改修(第13回): SP列名変換を南HILSルーム 統合HILS使用履歴リストの実内部名に差替え
 // field_1=設備, field_6=設備使用開始日, field_7=設備使用終了日,
-// OData__x7533__x8acb__x8005__x540d_=使用者名列（表示名。内部名は歴史的経緯で「申請者名」相当のエンコード）,
-// OData__x501f__x7528__x8005__x540d_=借用者名列, Title=ラベル（案件名）
+// OData__x7533__x8acb__x8005__x540d_=申請者名列（内部名は作成時点の表示名「申請者名」のエンコードのまま。
+// リネーム後の表示名「申請者名」と一致するため内部名の変更は不要）, Title=ラベル（案件名）
+// 改修: 借用者名列はSharePoint側で削除されたため読み込まない
 // colorはHILS使用履歴リストに列がないため固定値（#fde68a）で返す
 function normalizeSpItem(item) {
   // SharePointのDateTime列はISO形式（例: /Date(1234567890000)/またはYYYY-MM-DDTHH:mm:ssZ）で返る
@@ -1001,8 +1002,6 @@ function normalizeSpItem(item) {
     label:   item.Title                                         || '',
     color:    '#fde68a',  // 使用履歴リストにcolor列なし → UI固定値
     user:     item['OData__x7533__x8acb__x8005__x540d_']        || '',
-    // 改修: 使用履歴リストに新規追加された借用者名列を取得（承知/辞退ページで表示）
-    borrower: item['OData__x501f__x7528__x8005__x540d_']        || '',
     // 改修: アドレス列（筐体ごとの手入力識別情報。メールアドレスとは別物。南HILSルームのみ使用）
     address:  item['OData__x30a2__x30c9__x30ec__x30b9_']         || '',
     // 改修(承知/辞退表示不具合): 事務局アクションリストID列を返却し、承知/辞退ページの予約突合キーに使う
@@ -1028,14 +1027,11 @@ function normalizeActionItem(item) {
   };
 }
 
-// 改修(第13回): フロント項目→統合HILS使用履歴リストのSP列名変換
+// 改修(第13回): フロント項目→南HILSルーム 統合HILS使用履歴リストのSP列名変換
 // field_1=設備, field_6=設備使用開始日(DateTime), field_7=設備使用終了日(DateTime),
-// Title=ラベル（案件名）, OData__x7533__x8acb__x8005__x540d_=使用者名, OData__x501f__x7528__x8005__x540d_=借用者名
+// Title=ラベル（案件名）, OData__x7533__x8acb__x8005__x540d_=申請者名
 // color列は存在しないため書き込まない
-// 改修(不具合修正): 借用者(data.user, 登録フォーム「借用者」欄)と申請者(data.applicant, 登録フォーム「申請者」欄)が
-// 従来どちらも使用者名列に書き込まれており(借用者名列は常に空)、承知/辞退ページの借用者表示が空欄になる不具合があった。
-// get_fields reservation で両列の内部名を実機照合済み（借用者名列は28文字で32文字截断の心配もない）。
-// ユーザー指示: 借用者→借用者名列、申請者→使用者名列 に書き分ける
+// 改修: 借用者列はSharePoint側で削除されたため書き込まない（申請者のみ）
 function toSpFields(data) {
   const f = {};
   if (data.label   !== undefined) f.Title                                      = data.label;
@@ -1043,9 +1039,7 @@ function toSpFields(data) {
   // DateTime列: ISO形式（T00:00:00Z）でSharePointに渡す
   if (data.start   !== undefined) f.field_6                                     = data.start ? data.start.split('T')[0] + 'T00:00:00Z' : null;
   if (data.end     !== undefined) f.field_7                                     = data.end   ? data.end.split('T')[0]   + 'T00:00:00Z' : null;
-  // 借用者（f-user）は専用の借用者名列へ
-  if (data.user      !== undefined) f['OData__x501f__x7528__x8005__x540d_']     = data.user;
-  // 申請者（f-applicant）は使用者名列（表示名）へ
+  // 申請者（f-applicant）は申請者名列へ
   if (data.applicant !== undefined) f['OData__x7533__x8acb__x8005__x540d_']     = data.applicant;
   // 改修: 使用者アドレス列（申請者メールアドレス）へ書き込み。空の場合はスキップ（編集時の意図しないブランク上書き防止）
   if (data.email) f['OData__x7533__x8acb__x8005__x30a2__x30'] = data.email;

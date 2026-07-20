@@ -619,7 +619,6 @@ async function apiAppendLegendColor(resData) {
         end:       resData.end       || '',
         project:   resData.label     || '',
         color:     resData.color     || '#fde68a',
-        borrower:  resData.user      || '',
         applicant: resData.applicant || '',
         status:    resData.status    || 'normal',
         legendId:  resData.legendId  || '',
@@ -673,7 +672,6 @@ async function apiAppendStatus(resData) {
         end:       resData.end       || '',
         project:   resData.label     || '',
         color:     resData.color     || '#fde68a',
-        borrower:  resData.user      || '',
         applicant: resData.applicant || '',
         status:    resData.status    || 'normal',
         legendId:  resData.legendId  || '',
@@ -746,7 +744,7 @@ async function pruneExpiredHolidays() {
 }
 
 // 改修(SP連携マージ): SP列に対応する最小項目を組み立てる
-// 改修: user（使用者名列）は申請者欄の値を使用。email（使用者アドレス列）を追加
+// 改修: user（申請者名列）は申請者欄の値を使用。email（使用者アドレス列）を追加
 // 改修(事務局アクションリストID誤上書き防止): 第2引数isCreateを追加。
 // isCreate=true（新規登録）の場合のみ、今開いている案件ID(state.actionTitleId)を
 // actionListIdとして転記する。isCreate=false（既存予約の更新）の場合は、
@@ -763,10 +761,7 @@ function buildSpPayload(resData, isCreate) {
     end:     resData.end,
     label:   resData.label     || '',
     color,
-    // 改修(不具合修正): 従来ここで user に resData.applicant（申請者欄の値）を詰めており、
-    // 借用者欄（resData.user）の値がSPへ一切送られていなかった（借用者名列が常に空になる原因）。
-    // borrower/user 双方をそのまま送り、backend側 toSpFields() で借用者名列/使用者名列に振り分ける
-    user:      resData.user      || '',  // 借用者（f-user）
+    // 改修: 借用者列は削除されたため送信しない。申請者（f-applicant）のみSPへ送信する
     applicant: resData.applicant || '',  // 申請者（f-applicant）
     email:     resData.email     || '',  // 改修: 使用者アドレス列へ申請者メールアドレスを転記
     // 改修: アドレス列（筐体ごとの手入力識別情報。メールアドレスとは別物。南HILSルームのみ）
@@ -1191,7 +1186,7 @@ function renderCalendar() {
         editInput.focus();
         editInput.select();
 
-        // 改修: 筐体名リネーム時に予約データ（統合HILS使用履歴リスト／凡例色リストCSV／状態リストCSV）が
+        // 改修: 筐体名リネーム時に予約データ（南HILSルーム 統合HILS使用履歴リスト／凡例色リストCSV／状態リストCSV）が
         // 旧筐体名のまま放置されると、次回起動時の南ルーム自動同期で旧筐体名が幽霊行として復活する不具合があった。
         // 対象予約がある場合は確認のうえ、新筐体名で書き戻し・旧筐体名側を削除する（asyncに変更）
         async function commitEdit() {
@@ -1204,7 +1199,7 @@ function renderCalendar() {
             // 改修: 既存予約がある場合は確認。キャンセルならリネーム自体を中止する
             if (affected.length > 0 && !confirm(
               `筐体名「${oldName}」には${affected.length}件の予約データがあります。\n` +
-              `リネームすると、統合HILS使用履歴リスト等の予約データも新しい筐体名「${newName}」に更新されます。\n` +
+              `リネームすると、南HILSルーム 統合HILS使用履歴リスト等の予約データも新しい筐体名「${newName}」に更新されます。\n` +
               `よろしいですか？`
             )) {
               renderCalendar();
@@ -1236,7 +1231,7 @@ function renderCalendar() {
             }
             renderCalendar();  // 改修: ローカル表示を先に確定させてから、以下でSP/CSVへ反映する
 
-            // 改修: 対象予約を統合HILS使用履歴リスト／凡例色リストCSV／状態リストCSVへ新筐体名で反映
+            // 改修: 対象予約を南HILSルーム 統合HILS使用履歴リスト／凡例色リストCSV／状態リストCSVへ新筐体名で反映
             if (affected.length > 0) {
               showBusy('予約データを更新中...');
               let failCount = 0;
@@ -2618,7 +2613,7 @@ document.getElementById('accept-reject-btn').addEventListener('click', async () 
       await patchActionAccept(rejectId, '辞退');
       // 改修: 1案件=1予約ガード用に現在ステータスを追従
       state.actionStatus = '91.申請者取り下げ';
-      // ③ 改修(複数行予約対応): 統合HILS使用履歴リストから同一申請の予約行を全件削除する
+      // ③ 改修(複数行予約対応): 南HILSルーム 統合HILS使用履歴リストから同一申請の予約行を全件削除する
       // （突合成功時のみ。1件も無ければ従来通りスキップし辞退処理は継続）
       for (const res of rejList) {
         await fetch(`/api/reservations/${res.id}`, { method: 'DELETE' });
@@ -2770,7 +2765,6 @@ function openRegisterDialog() {
     endIso:    dateToIso(endDate),
     label:     '',
     legendId:  defLeg,
-    user:      '',             // 改修(SP連携マージ): 借用者
     applicant: '',
     remark:    '',
     assignee:  state.assignees[allMachines[rows[0]]] || '',  // 改修: ダイアログ担当者欄の初期値
@@ -2796,7 +2790,6 @@ function openEditDialog(resId) {
     endIso:    res.end.split('T')[0],
     label:     res.label     || '',
     legendId:  res.legendId  || (_legend.length > 0 ? _legend[0].id : ''),
-    user:      res.user      || '',    // 改修(SP連携マージ): 借用者
     applicant: res.applicant || '',
     remark:    res.remark    || '',
     assignee:  state.assignees[res.machine] || '',  // 改修: ダイアログ担当者欄の初期値（担当者列の現在値）
@@ -2818,7 +2811,6 @@ function openViewDialog(resId) {
     endIso:    res.end.split('T')[0],
     label:     res.label     || '',
     legendId:  res.legendId  || (_legend.length > 0 ? _legend[0].id : ''),
-    user:      res.user      || '',    // 改修(SP連携マージ): 借用者
     applicant: res.applicant || '',
     remark:    res.remark    || '',
     assignee:  state.assignees[res.machine] || '',  // 改修: ダイアログ担当者欄の初期値（担当者列の現在値）
@@ -3021,10 +3013,6 @@ function showDialog(title, data, mode, resId = null) {
       <label>ラベル:</label>
       <input type="text" id="f-label" value="${data.label}" placeholder="プロジェクト名など">
     </div>
-    <div id="form-row-user" class="form-row">
-      <label>借用者:</label>
-      <input type="text" id="f-user" value="${data.user || ''}" placeholder="氏名など">
-    </div>
     <div id="form-row-applicant" class="form-row">
       <label>申請者:</label>
       <input type="text" id="f-applicant" value="${data.applicant || ''}" placeholder="氏名など">
@@ -3135,15 +3123,13 @@ function showDialog(title, data, mode, resId = null) {
   function updateStatusFields() {
     const status   = document.getElementById('f-status').value;
     const isNormal = status === 'normal';
-    // 改修(SP連携マージ): form-row-user（借用者行）を追加
     // 改修: 担当者行（form-row-assignee）を追加
-    ['form-row-label', 'form-row-legend', 'form-row-user', 'form-row-applicant', 'form-row-remark', 'form-row-assignee', 'form-row-marks'].forEach(id => {
+    ['form-row-label', 'form-row-legend', 'form-row-applicant', 'form-row-remark', 'form-row-assignee', 'form-row-marks'].forEach(id => {
       const row = document.getElementById(id);
       if (row) row.style.opacity = isNormal ? '1' : '0.4';
     });
-    // 改修(SP連携マージ): f-user（借用者入力）を追加
     // 改修: f-assignee（担当者入力）を追加
-    ['f-label', 'f-legend', 'f-user', 'f-applicant', 'f-remark', 'f-assignee'].forEach(id => {
+    ['f-label', 'f-legend', 'f-applicant', 'f-remark', 'f-assignee'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.disabled = !isNormal;
     });
@@ -3237,7 +3223,6 @@ function showDialog(title, data, mode, resId = null) {
       label:     document.getElementById('f-label').value.trim(),
       legendId,
       color,
-      user:      document.getElementById('f-user').value.trim(),      // 改修(SP連携マージ): 借用者
       applicant: document.getElementById('f-applicant').value.trim(),
       email:     state.autoFill ? state.autoFill.email : '',         // 改修: 申請者メールアドレス（使用者アドレス列へ転記）
       // 改修: アドレス（筐体ごとの手入力識別情報。メールアドレスとは別物）。南HILSルームのみ保存対象
@@ -3463,7 +3448,7 @@ function showDialog(title, data, mode, resId = null) {
         })();
       }
 
-      // 改修: 複数筐体一括登録の連動予約（兄弟）へ、日程・分類・借用者・申請者・備考・状態を自動反映する。
+      // 改修: 複数筐体一括登録の連動予約（兄弟）へ、日程・分類・申請者・備考・状態を自動反映する。
       // 筐体名・アドレス・担当者・検証完了日★（marks）は筐体固有のため連動対象外
       const groupId = state.reservations[resId].groupId;
       if (groupId != null) {
@@ -3485,7 +3470,6 @@ function showDialog(title, data, mode, resId = null) {
                 end:       resData.end,
                 legendId:  resData.legendId,
                 color:     resData.color,
-                user:      resData.user,
                 applicant: resData.applicant,
                 remark:    resData.remark,
                 status:    resData.status,
@@ -3609,13 +3593,11 @@ function mapLegacyMachine(name) {
 // ────────────────────────────────────────────
 function renderAcceptInfo() {
 	const list = state.actionHilsResList || [];
-	// 改修(複数行予約表示調整): 借用者/使用開始日/使用終了日は同一申請内の全予約行で共通の値のため、
+	// 改修(複数行予約表示調整): 使用開始日/使用終了日は同一申請内の全予約行で共通の値のため、
 	// 先頭行(代表)を1つだけ表示する。機種名のみ全行分を列挙する
 	const first = list[0] || null;
-	const borrower = first ? (first.borrower || '') : '';
 	const start    = first ? first.start           : '';
 	const end      = first ? first.end             : '';
-	document.getElementById('accept-info-user').textContent  = borrower || '−';
 	document.getElementById('accept-info-start').textContent = start    || '−';
 	document.getElementById('accept-info-end').textContent   = end      || '−';
 
@@ -3706,7 +3688,6 @@ async function init() {
             machine:  h.machine,
             start:    h.start,
             end:      h.end,
-            borrower: h.borrower || '',
             label:    h.label   || '',
           }));
         }
@@ -3721,7 +3702,7 @@ async function init() {
       // 改修(第12回): 自動記入用データをstateに保持（登録ダイアログで初期値セット）W-4
       state.autoFill = {
         label:     actionItem.usage       || '',  // 改修: 機種呼称→環境使用用途をラベル初期値に変更
-        applicant: actionItem.applicant   || '',  // 申請者名を申請者欄初期値に（改修: 借用者欄から変更）
+        applicant: actionItem.applicant   || '',  // 申請者名を申請者欄初期値に
         email:     actionItem.email       || '',
         category:  actionItem.category    || '',
       };
@@ -3770,17 +3751,14 @@ async function init() {
         start:     res.start,
         end:       res.end,
         label:     res.label   || '',
-        // 改修(起動連携): 申請者名はSP使用者名列（field_1→user）から取得
+        // 改修(起動連携): 申請者名はSP申請者名列（field_1→user）から取得
         applicant: res.user    || ex.applicant || '',
         // 改修(起動連携): SP列が無いリッチ項目はCSVから復元、無ければlocalStorage→既定値の順
         color:     csv.color    || ex.color    || '#fde68a',
-        user:      csv.borrower || ex.user     || '',
         legendId:  csv.legendId || ex.legendId || (_legend.length > 0 ? _legend[0].id : ''),
         status:    csv.status   || ex.status   || 'normal',
         remark:    csv.remark   || ex.remark   || '',
         marks:     (csv.marks && csv.marks.length > 0) ? csv.marks : (ex.marks || []),
-        // 改修: 借用者名列（使用履歴リスト新規追加）をSPから取得（承知/辞退ページで表示）
-        borrower:  res.borrower || '',
         // 改修(起動連携): 使用履歴リストの予約は南ルームに固定（西ルームではない）
         room:      'south',
         // 改修(案件跨ぎ誤操作防止・不具合修正): APIレスポンスには含まれていたが、
@@ -3834,12 +3812,10 @@ async function init() {
       label:     s.project   || '',
       applicant: s.applicant || '',
       color:     s.color     || '#fde68a',
-      user:      s.borrower  || '',
       legendId:  s.legendId  || '',
       status:    s.status    || 'normal',
       remark:    s.remark    || '',
       marks:     s.marks     || [],
-      borrower:  s.borrower  || '',
       room:      'south',
     }));
     state.reservations = state.reservations.concat(statusReservations);
