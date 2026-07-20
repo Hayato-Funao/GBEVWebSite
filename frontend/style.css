@@ -1,8 +1,9 @@
 /* ── リセット & ベース ── */
 * { box-sizing: border-box; margin: 0; padding: 0; }
+/* 改修(表拡大): 全体1.5倍化。ただしトップバー（.topbar配下）は対象外のため個別に現状維持している */
 body {
   font-family: 'Meiryo UI', 'Meiryo', 'メイリオ', sans-serif;
-  font-size: 13px;
+  font-size: 20px;
   background: #fff;
   color: #1e293b;
 }
@@ -14,7 +15,7 @@ body {
   height: 100vh;
 }
 
-/* ── トップバー ── */
+/* ── トップバー（改修(表拡大)の対象外。サイズは現状維持） ── */
 .topbar {
   display: flex;
   align-items: center;
@@ -70,7 +71,8 @@ body {
   font-size: 11px;
 }
 
-/* ── 汎用ボタン ── */
+/* ── 汎用ボタン（トップバーのマニュアル/地図ボタンが依存するため現状維持。
+     ガント側の各ボタンは個別クラスで高さ/フォントを上書きしているため影響しない） ── */
 .btn {
   border: none;
   border-radius: 6px;
@@ -91,16 +93,17 @@ body {
 /* 改修(休日設定ボタン色調整): 登録ボタン(緑)と隣接して見分けづらいため専用色に分離 */
 .btn-holiday  { background: #4f46e5; color: #fff; }
 .btn-holiday:hover { background: #4338ca; }
-.btn-edit     { background: #475569; color: #fff; height: 26px; font-size: 10px; }
+/* 改修(表拡大): height26→39, font-size10→15（トップバー以外のボタンは1.5倍化の対象） */
+.btn-edit     { background: #475569; color: #fff; height: 39px; font-size: 15px; }
 .btn-edit:hover { background: #334155; }
 /* 改修(マージ): 予約削除ボタン（編集ダイアログのフッター左側で使用） */
-.btn-delete       { background: #dc2626; color: #fff; height: 26px; font-size: 10px; }
+.btn-delete       { background: #dc2626; color: #fff; height: 39px; font-size: 15px; }
 .btn-delete:hover { background: #b91c1c; }
 /* 改修: 📷保存ボタン（スクショ機能削除に伴いCSSも削除） */
 /* 改修(第6回): 延長申請ボタン */
-.btn-extend       { background: #0891b2; color: #fff; height: 26px; font-size: 10px; }
+.btn-extend       { background: #0891b2; color: #fff; height: 39px; font-size: 15px; }
 .btn-extend:hover { background: #0e7490; }
-/* 改修: マニュアルボタン（トップバー右側） */
+/* 改修: マニュアルボタン（トップバー右側。改修(表拡大)の対象外） */
 .btn-manual       { background: #475569; color: #fff; }
 .btn-manual:hover { background: #334155; }
 /* 改修: HEMS地図リンク（<a>タグに.btnを適用するため、button相当の見た目に補正） */
@@ -112,23 +115,26 @@ body {
   box-sizing: border-box;
 }
 /* 改修: 利用取消依頼ボタン（使用者モード・下部情報パネル） */
-.btn-cancel-request       { background: #dc2626; color: #fff; height: 26px; font-size: 10px; }
+.btn-cancel-request       { background: #dc2626; color: #fff; height: 39px; font-size: 15px; }
 .btn-cancel-request:hover { background: #b91c1c; }
 /* 改修: 利用終了報告ボタン（使用者モード・下部情報パネル） */
-.btn-report       { background: #0d9488; color: #fff; height: 26px; font-size: 10px; }
+.btn-report       { background: #0d9488; color: #fff; height: 39px; font-size: 15px; }
 .btn-report:hover { background: #0f766e; }
 /* 改修: 利用終了ボタン（事務局モード・下部情報パネル） */
-.btn-terminate       { background: #334155; color: #fff; height: 26px; font-size: 10px; }
+.btn-terminate       { background: #334155; color: #fff; height: 39px; font-size: 15px; }
 .btn-terminate:hover { background: #1e293b; }
 
+/* 改修(表拡大): border-radius8→12, padding0 16px→0 24px, height36→54, font-size11→16 */
+/* 改修(幅調整): side-panel縮小(400px)によりキャンセル/保存/削除/利用終了の4ボタンが1行に収まらず
+   文字が縦に折り返される問題が発生したため、padding/height/font-sizeを縮小する */
 .btn-cancel {
   background: #e2e8f0; color: #475569;
-  border-radius: 8px; padding: 0 16px; height: 36px; font-size: 11px;
+  border-radius: 8px; padding: 0 14px; height: 46px; font-size: 13px;
 }
 .btn-cancel:hover { background: #cbd5e1; }
 .btn-ok {
   background: #4f46e5; color: #fff;
-  border-radius: 8px; padding: 0 20px; height: 36px; font-size: 11px; font-weight: bold;
+  border-radius: 8px; padding: 0 18px; height: 46px; font-size: 13px; font-weight: bold;
 }
 .btn-ok:hover:not(:disabled) { background: #4338ca; }
 .btn-ok:disabled { background: #cbd5e1; color: #94a3b8; }
@@ -163,15 +169,24 @@ body {
 .cal-nav {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 4px 6px;
+  gap: 9px;
+  padding: 3px 6px 9px;
   flex-shrink: 0;
 }
 
+/* 改修(表拡大): .cal-nav配下のボタン（前月/次月/今月/＋登録/休日設定）は基底.btnのサイズを使うが、
+   基底.btn自体はトップバーのマニュアル/地図ボタンが共用するため変更できない。
+   スコープを.cal-nav配下に限定した上書きルールで1.5倍化する（height28→42, font11→16, padding0 14px→0 21px） */
+.cal-nav .btn {
+  height: 42px;
+  font-size: 16px;
+  padding: 0 21px;
+}
+
 .month-label {
-  font: bold 16px 'Meiryo UI', sans-serif;
+  font: bold 24px 'Meiryo UI', sans-serif;
   color: #1e293b;
-  min-width: 140px;
+  min-width: 210px;
   text-align: center;
 }
 
@@ -190,13 +205,14 @@ body {
 }
 
 /* 行ヘッダー（機種名） */
+/* 改修(表拡大): width170→255, min-width140→210, font11→16（3週間分表示に伴う表全体1.5倍化） */
 .gantt-table th.machine-col,
 .gantt-table td.machine-col {
-  width: 170px;
-  min-width: 140px;
+  width: 255px;
+  min-width: 210px;
   background: #e2e8f0;
-  font: 11px 'Meiryo UI', sans-serif;
-  padding: 2px 6px;
+  font: 16px 'Meiryo UI', sans-serif;
+  padding: 3px 9px;
   text-align: left;
   border-right: 1px solid #94a3b8;
   border-bottom: 1px solid #e2e8f0;
@@ -211,24 +227,25 @@ body {
   z-index: 3; /* 改修: 予約バー選択セル(z-index:2)より前面にして固定列が覆われないよう修正 */
 }
 
+/* 改修(表拡大): 月見出し行(33px)+日付行(66px)の2行分を占有するため高さを99pxに変更、font11→16 */
 .gantt-table thead th.machine-col {
   background: #e2e8f0;
   border-bottom: 1px solid #94a3b8;
-  /* 改修(第7回): 月見出し行(22px)+日付行(44px)の2行分を占有するため高さを66pxに変更 */
-  height: 66px;
-  font: bold 11px 'Meiryo UI', sans-serif;
+  height: 99px;
+  font: bold 16px 'Meiryo UI', sans-serif;
   /* 日付ヘッダー(z-index:4)より上に置き、左上コーナーセルが隠れないようにする */
   z-index: 5;
 }
 
 /* 改修: アドレス列（列順入れ替えにより左端に sticky 固定。筐体ごとの手入力識別情報でメールアドレスとは別物。南HILSルームのみ表示） */
+/* 改修(表拡大): width80→120, min-width70→105, font11→16 */
 .gantt-table th.address-col,
 .gantt-table td.address-col {
-  width: 80px;
-  min-width: 70px;
+  width: 120px;
+  min-width: 105px;
   background: #e2e8f0;
-  font: 11px 'Meiryo UI', sans-serif;
-  padding: 2px 6px;
+  font: 16px 'Meiryo UI', sans-serif;
+  padding: 3px 9px;
   text-align: left;
   border-right: 1px solid #94a3b8;
   border-bottom: 1px solid #e2e8f0;
@@ -243,8 +260,8 @@ body {
 .gantt-table thead th.address-col {
   background: #e2e8f0;
   border-bottom: 1px solid #94a3b8;
-  height: 66px;
-  font: bold 11px 'Meiryo UI', sans-serif;
+  height: 99px;
+  font: bold 16px 'Meiryo UI', sans-serif;
   z-index: 5;
 }
 /* 改修: アドレス列 非表示クラス（南HILSルーム以外で全行のアドレス列を一括非表示）
@@ -255,13 +272,14 @@ body {
 .gantt-table.address-hidden td.address-col { visibility: collapse; }
 
 /* 改修: 担当者列（アドレス列の右隣に sticky 固定） */
+/* 改修(表拡大): width80→120, min-width70→105, font11→16, left fallback169px→254px */
 .gantt-table th.assignee-col,
 .gantt-table td.assignee-col {
-  width: 80px;
-  min-width: 70px;
+  width: 120px;
+  min-width: 105px;
   background: #e2e8f0;
-  font: 11px 'Meiryo UI', sans-serif;
-  padding: 2px 6px;
+  font: 16px 'Meiryo UI', sans-serif;
+  padding: 3px 9px;
   text-align: left;
   border-right: 1px solid #94a3b8;
   border-bottom: 1px solid #e2e8f0;
@@ -269,16 +287,15 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   position: sticky;
-  left: var(--assignee-left, 169px); /* 改修(第7回追補2): 筐体列＋アドレス列の実描画幅に追従（applyDateColWidth が CSS変数を設定）。フォールバック169px */
+  left: var(--assignee-left, 254px); /* 改修(第7回追補2): 筐体列＋アドレス列の実描画幅に追従（applyDateColWidth が CSS変数を設定）。フォールバック254px */
   z-index: 3; /* 改修: 予約バー選択セル(z-index:2)より前面にして固定列が覆われないよう修正 */
   box-shadow: inset 1px 0 0 0 #d1d5db; /* 改修: border-collapse では sticky に追従しないため box-shadow でセルと同じ縦罫線（#d1d5db）を再現 */
 }
 .gantt-table thead th.assignee-col {
   background: #e2e8f0;
   border-bottom: 1px solid #94a3b8;
-  /* 改修(第7回): 月見出し行(22px)+日付行(44px)の2行分を占有するため高さを66pxに変更 */
-  height: 66px;
-  font: bold 11px 'Meiryo UI', sans-serif;
+  height: 99px;
+  font: bold 16px 'Meiryo UI', sans-serif;
   z-index: 5;
 }
 /* 改修: 担当者列 非表示クラス（チェックボックス連動／南HILSルーム強制非表示）
@@ -291,12 +308,12 @@ body {
 
 /* 改修: 撮影用sticky解除ルール（スクショ機能削除に伴い削除） */
 
-/* 改修: 担当者列トグルのラベルスタイル */
+/* 改修: 担当者列トグルのラベルスタイル（改修(表拡大): font12→18） */
 .assignee-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font: 12px 'Meiryo UI', sans-serif;
+  gap: 6px;
+  font: 18px 'Meiryo UI', sans-serif;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -304,21 +321,23 @@ body {
 /* 改修(第7回追補): colgroup の col 幅を CSS変数と同期させるルール
    JS の applyDateColWidth() がインラインスタイルでも上書きするが、
    CSS変数フォールバックとして定義しておく */
-.gantt-table col.col-machine  { width: 170px; }
-.gantt-table col.col-assignee { width: 80px; }
-.gantt-table col.col-date     { width: var(--date-col-w, 26px); }
+/* 改修(表拡大): 170→255, 80→120, 26→39 */
+.gantt-table col.col-machine  { width: 255px; }
+.gantt-table col.col-assignee { width: 120px; }
+.gantt-table col.col-date     { width: var(--date-col-w, 39px); }
 
 /* 改修(第7回): 月見出し行（通し表示のヘッダ1行目） */
+/* 改修(表拡大): height22→33, font11→16 */
 .gantt-table th.month-col {
   background: #c7d2e0;
-  font: bold 11px 'Meiryo UI', sans-serif;
+  font: bold 16px 'Meiryo UI', sans-serif;
   color: #1e293b;
   border-right: 2px solid #94a3b8;
   border-bottom: 1px solid #94a3b8;
-  padding: 2px 0;
+  padding: 3px 0;
   text-align: center;
   vertical-align: middle;
-  height: 22px;
+  height: 33px;
   /* 月見出し行を縦スクロール追従（日付行の下に隠れないよう最上段に固定） */
   position: sticky;
   top: 0;
@@ -326,32 +345,34 @@ body {
 }
 
 /* 列ヘッダー（日付）*/
+/* 改修(表拡大): height44→66, font11→16, top22→33（月見出し行の高さに合わせる）, width fallback26→39 */
 .gantt-table th.date-col {
   background: #e2e8f0;
-  font: bold 11px 'Meiryo UI', sans-serif;
+  font: bold 16px 'Meiryo UI', sans-serif;
   color: #374151;
   border-right: 1px solid #cbd5e1;
   border-bottom: 1px solid #94a3b8;
-  padding: 2px 0;
+  padding: 3px 0;
   text-align: center;
   vertical-align: middle;
   line-height: 1.3;
-  height: 44px;
-  /* 改修(第7回追補): 日付列幅をCSS変数で管理（JSが31日フィット幅を動的に設定） */
-  width: var(--date-col-w, 26px);
-  /* 改修(第7回): 月見出し行(22px)の下に sticky 固定 */
+  height: 66px;
+  /* 改修(第7回追補): 日付列幅をCSS変数で管理（JSが21日フィット幅を動的に設定） */
+  width: var(--date-col-w, 39px);
+  /* 改修(第7回): 月見出し行の下に sticky 固定 */
   position: sticky;
-  top: 22px;
+  top: 33px;
   z-index: 4;
 }
 .gantt-table th.date-col.weekend  { background: #d1d5db; color: #64748b; }
 .gantt-table th.date-col.today-hd { background: #bfdbfe; color: #1d4ed8; }
 
 /* データセル */
+/* 改修(表拡大): height30→45, width fallback26→39 */
 .gantt-table td.gantt-cell {
-  height: 30px;
+  height: 45px;
   /* 改修(第7回追補): 日付列幅をCSS変数で管理（colgroup と同期） */
-  width: var(--date-col-w, 26px);
+  width: var(--date-col-w, 39px);
   border-right: 1px solid #d1d5db;
   border-bottom: 1px solid #d1d5db;
   background: #fff;
@@ -396,6 +417,7 @@ body {
 }
 
 /* 予約ラベル（先頭セルから右方向に流れる） */
+/* 改修(表拡大): font12→18（行高45pxに収まる） */
 .res-label {
   position: absolute;
   top: 1px;
@@ -404,8 +426,7 @@ body {
   height: calc(100% - 2px);
   display: flex;
   align-items: center;
-  /* 改修: 予約表テキストの視認性向上のため太字＋12pxに変更（セルからのはみ出しは行高30pxに収まるため発生しない） */
-  font: bold 12px 'Meiryo UI', sans-serif;
+  font: bold 18px 'Meiryo UI', sans-serif;
   color: #1e293b;
   white-space: nowrap;
   pointer-events: none;
@@ -419,14 +440,14 @@ body {
 
 /* 改修(第8回): 検証完了★マーカー（res-label内に絶対配置・left はJS側で設定）
    開始セルのlabelEl内に置くことで選択時も全★が表示される */
+/* 改修(表拡大): font12→18 */
 .res-mark {
   position: absolute;
   top: 0;
   height: 100%;
   display: flex;
   align-items: center;
-  /* 改修: 予約表テキストの視認性向上のため12pxに変更（既存の太字は維持） */
-  font: bold 12px 'Meiryo UI', sans-serif;
+  font: bold 18px 'Meiryo UI', sans-serif;
   color: #1e293b;      /* ラベルと同じ黒系 */
   white-space: nowrap;
   pointer-events: none;
@@ -438,6 +459,7 @@ body {
 }
 
 /* 備考（予約バー終了セル内の右端に表示。left:100%→right:3px に変更して飛び出しを解消） */
+/* 改修(表拡大): font12→18 */
 .res-remark {
   position: absolute;
   top: 1px;
@@ -446,8 +468,7 @@ body {
   height: calc(100% - 2px);
   display: flex;
   align-items: center;
-  /* 改修: 予約表テキストの視認性向上のため太字＋12pxに変更 */
-  font: bold 12px 'Meiryo UI', sans-serif;
+  font: bold 18px 'Meiryo UI', sans-serif;
   color: #1e293b;
   white-space: nowrap;
   pointer-events: none;
@@ -460,26 +481,28 @@ body {
 }
 
 /* 環境名インライン編集用入力フィールド（行ヘッダーダブルクリック時に表示） */
+/* 改修(表拡大): height24→36, font11→16 */
 .machine-edit-input {
   width: 100%;
-  height: 24px;
+  height: 36px;
   border: 1.5px solid #4f46e5;
   border-radius: 3px;
-  padding: 2px 4px;
-  font: 11px 'Meiryo UI', sans-serif;
+  padding: 3px 6px;
+  font: 16px 'Meiryo UI', sans-serif;
   color: #1e293b;
   background: #fff;
   outline: none;
 }
 
 /* 改修: 担当者インライン編集用入力フィールド（担当者セルダブルクリック時に表示） */
+/* 改修(表拡大): height24→36, font11→16 */
 .assignee-edit-input {
   width: 100%;
-  height: 24px;
+  height: 36px;
   border: 1.5px solid #0ea5e9;  /* 筐体列（紫）と区別できる水色系 */
   border-radius: 3px;
-  padding: 2px 4px;
-  font: 11px 'Meiryo UI', sans-serif;
+  padding: 3px 6px;
+  font: 16px 'Meiryo UI', sans-serif;
   color: #1e293b;
   background: #fff;
   outline: 2px solid #bae6fd;   /* フォーカス枠を視認しやすくする */
@@ -487,20 +510,21 @@ body {
 }
 
 /* ── 選択情報パネル ── */
+/* 改修(表拡大): height46→69, gap24→36, padding0 16px→0 24px */
 .info-panel {
   display: flex;
   align-items: center;
-  gap: 24px;
-  height: 46px;
-  padding: 0 16px;
+  gap: 36px;
+  height: 69px;
+  padding: 0 24px;
   background: #f1f5f9;
   border-top: 1px solid #cbd5e1;
   flex-shrink: 0;
 }
-.info-hint { color: #94a3b8; font-size: 11px; }
-.info-item { font-size: 11px; color: #1e293b; }
+.info-hint { color: #94a3b8; font-size: 16px; }
+.info-item { font-size: 16px; color: #1e293b; }
 
-/* ── ダイアログ ── */
+/* ── ダイアログ（現行UIでは未使用のレガシー要素。改修(表拡大)に合わせて寸法のみ維持更新） ── */
 .dialog-overlay {
   position: fixed;
   inset: 0;
@@ -512,65 +536,73 @@ body {
 }
 .dialog-overlay.hidden { display: none; }
 
+/* 改修(表拡大): min-width420→630, max-width500→750 */
 .dialog-box {
   background: #f8fafc;
   border-radius: 8px;
-  min-width: 420px;
-  max-width: 500px;
+  min-width: 630px;
+  max-width: 750px;
   width: 90%;
   box-shadow: 0 20px 40px rgba(0,0,0,0.3);
   overflow: hidden;
 }
 
+/* 改修(表拡大): font13→20, padding14px20px→21px30px */
 .dialog-header {
   background: #4f46e5;
   color: #fff;
-  padding: 14px 20px;
-  font: bold 13px 'Meiryo UI', sans-serif;
+  padding: 21px 30px;
+  font: bold 20px 'Meiryo UI', sans-serif;
 }
 
+/* 改修(表拡大): padding16px24px8px→24px36px12px */
 .dialog-body {
-  padding: 16px 24px 8px;
+  padding: 24px 36px 12px;
 }
 
+/* 改修(表拡大): padding8px24px16px→12px36px24px */
 .dialog-footer {
   display: flex;
   align-items: center;
-  padding: 8px 24px 16px;
+  padding: 12px 36px 24px;
 }
 /* 改修(マージ): 削除ボタンをダイアログ左側に配置。キャンセル/保存と同じ高さに揃える */
+/* 改修(表拡大): border-radius8→12, padding0 16px→0 24px, height36→54, font-size11→16 */
 .dialog-footer .btn-delete {
-  border-radius: 8px; padding: 0 16px; height: 36px; font-size: 11px;
+  border-radius: 12px; padding: 0 24px; height: 54px; font-size: 16px;
 }
 /* 改修(マージ): キャンセル・保存は右揃え（削除ボタンの有無に関わらず右端に固定） */
 .dialog-footer-right {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   margin-left: auto;
 }
 
 /* フォーム行 */
+/* 改修(表拡大): gap10→15, margin-bottom10→15 */
 .form-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 15px;
+  margin-bottom: 15px;
 }
+/* 改修(表拡大): width56→84, font11→16 */
 .form-row label {
-  width: 56px;
-  font-size: 11px;
+  width: 84px;
+  font-size: 16px;
   color: #1e293b;
   flex-shrink: 0;
 }
+/* 改修(表拡大): height32→48, font11→16 */
 .form-row input,
 .form-row select,
 .form-row textarea {
   flex: 1;
-  height: 32px;
+  height: 48px;
   border: 1.5px solid #e2e8f0;
   border-radius: 6px;
-  padding: 4px 8px;
-  font: 11px 'Meiryo UI', sans-serif;
+  padding: 6px 12px;
+  font: 16px 'Meiryo UI', sans-serif;
   color: #1e293b;
   background: #fff;
 }
@@ -579,30 +611,44 @@ body {
   height: auto;
   resize: vertical;
 }
+/* 改修(表拡大): width56→84 */
 .form-row input[type="color"] {
   flex: none;
-  width: 56px;
-  padding: 2px 4px;
+  width: 84px;
+  padding: 3px 6px;
   cursor: pointer;
 }
 .form-row input:focus,
 .form-row select:focus { border-color: #4f46e5; outline: none; }
 
-.biz-label  { font: bold 12px 'Meiryo UI', sans-serif; color: #4f46e5; margin-top: 6px; }
-.warn-label { font-size: 10px; color: #dc2626; margin-top: 4px; }
+/* 改修(表拡大): font12→18, font10→15 */
+.biz-label  { font: bold 18px 'Meiryo UI', sans-serif; color: #4f46e5; margin-top: 9px; }
+.warn-label { font-size: 15px; color: #dc2626; margin-top: 6px; }
 
 /* 改修(第8回): ダイアログ内・検証完了日（★）セクション */
+/* 改修(表拡大): padding8px10px4px→12px15px6px, margin-bottom10→15 */
 .form-marks-group {
   border: 1px solid #e2e8f0;
   border-radius: 6px;
-  padding: 8px 10px 4px;
-  margin-bottom: 10px;
+  padding: 12px 15px 6px;
+  margin-bottom: 15px;
 }
+/* 改修(はみ出し対策): タイトル入力(144px固定)+日付入力+★バッジ(可変幅)の合計が
+   サイドパネル幅を超えると、★バッジのテキストが枠外にそのままはみ出して表示される不具合があった
+   （.form-mark-rowにoverflow/flex-wrap指定が無く、.mark-star-badgeが縮まないため）。
+   flex-wrapで折り返し可能にし、日付欄の幅を固定してバッジが独立して次の行へ落ちるようにする。
+   gapは.form-rowの15pxのままだと通常時(短いタイトル)でも1行に収まらず常に折り返ってしまうため、
+   このセクションのみ8pxへ詰めて日付欄に必要な幅を確保する */
+.form-mark-row {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* 改修(表拡大): font11→16 */
 .form-marks-title {
-  font-size: 11px;
+  font-size: 16px;
   font-weight: bold;
   color: #64748b;
-  margin-bottom: 6px;
+  margin-bottom: 9px;
 }
 /* 改修(第9回): チェックボックスをネイティブサイズに戻す
    .form-row input (詳細度0,1,1) を上回るため .form-row input.f-mark-chk (詳細度0,2,1) を使用 */
@@ -616,32 +662,51 @@ body {
   cursor: pointer;
 }
 /* 改修(第9回): タイトルテキスト入力欄（ラベルそのものを直接編集） */
-.f-mark-title {
-  width: 96px;
-  font-size: 11px;
-  padding: 2px 4px;
+/* 改修(表拡大): width96→144, font11→16 */
+/* 改修(はみ出し対策): .form-row input (詳細度0,1,1) の flex:1 が .f-mark-title (詳細度0,1,0) の
+   flex-shrink:0 を上書きし、余剰スペースを吸収して実測256pxまで伸びていた。
+   .form-row input.f-mark-title (詳細度0,2,1) にして144px固定を確実に効かせる */
+.form-row input.f-mark-title {
+  width: 144px;
+  flex: 0 0 144px;
+  min-width: 0;
+  font-size: 16px;
+  padding: 3px 6px;
   border: 1px solid #cbd5e1;
   border-radius: 3px;
-  flex-shrink: 0;
 }
 .f-mark-title:disabled { background: #f1f5f9; color: #94a3b8; }
+/* 改修(はみ出し対策): .form-row inputのflex:1をやめ固定幅にする。
+   flex:1のままだと★バッジの分だけ日付欄が伸縮し続け、バッジ側がいつまでも縮まらずはみ出るため、
+   日付欄を固定幅にしてバッジ側をflex-wrapで折り返す対象として扱えるようにする。
+   改修: .form-row input (詳細度0,1,1) を上回るため .form-row input.f-mark-date (詳細度0,2,1) を使用
+   （第9回のf-mark-chkと同じ理由。単に.f-mark-dateだけでは詳細度が足りずflex:1が優先されてしまう） */
+.form-row input.f-mark-date {
+  flex: 0 0 150px;
+  /* 改修: flexアイテムのmin-width初期値(auto)はコンテンツの最小サイズを優先してしまい、
+     type="date"のネイティブ最小幅（Chromiumで約177px）まで広がってflex-basisが無視されるため、
+     min-width:0で明示的に上書きし固定幅を効かせる */
+  min-width: 0;
+}
 /* ★バッジ（タイトル入力欄の右に表示） */
+/* 改修(表拡大): font11→16, min-width52→78 */
 .mark-star-badge {
-  font: bold 11px 'Meiryo UI', sans-serif;
+  font: bold 16px 'Meiryo UI', sans-serif;
   color: #b91c1c;
   flex-shrink: 0;
-  min-width: 52px;
+  min-width: 78px;
 }
 /* 改修(第5回): 自動生成ラベル欄（読み取り専用の見た目） */
 #f-label[readonly] { background: #f1f5f9; color: #475569; }
 /* 改修: 複数筐体一括登録時の対象筐体一覧（読み取り専用の見た目。selectと揃えて表示） */
+/* 改修(表拡大): font12→18, padding3px6px→5px9px */
 .multi-machine-list {
   background: #f1f5f9;
   color: #475569;
   border: 1px solid #cbd5e1;
   border-radius: 4px;
-  padding: 3px 6px;
-  font: 12px 'Meiryo UI', sans-serif;
+  padding: 5px 9px;
+  font: 18px 'Meiryo UI', sans-serif;
 }
 /* 改修(第5回): ガントバーのXPXラベルリンク（バー文字色を継承し下線のみ付与） */
 /* 不具合修正: 親 .res-label が pointer-events:none のため auto に戻してクリック可能にする */
@@ -666,10 +731,28 @@ body {
   border: 1px solid #cbd5e1;
 }
 
+/* 改修(ドラッグリサイズ対応): ガント表とサイドパネルの間のリサイズハンドル。
+   幅6pxの縦バー。ドラッグ操作はapp.js側（mousedown/mousemove/mouseup）で実装 */
+.side-panel-resizer {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+}
+.side-panel-resizer:hover,
+.side-panel-resizer.resizing {
+  background: #94a3b8;
+}
+
 /* ── 右サイドパネル（凡例＋フォームの上下2分割コンテナ・改修） ── */
+/* 改修(表拡大): width400→600, min-width360→540 */
+/* 改修(幅調整): 600/540が広すぎるとのフィードバックにより3分の2の400/360へ戻す */
+/* 改修(ドラッグリサイズ対応): 検証完了日欄（.f-mark-title144px固定+.mark-star-badge最小78px固定）が
+   400pxでは見切れるため初期幅を520pxへ拡大。以後はドラッグで可変（app.js側でインラインwidthを更新）。
+   リサイズ可能範囲は400px〜800px（SIDE_PANEL_MIN_W/MAX_Wと一致） */
 .side-panel {
-  width: 400px;
-  min-width: 360px;
+  width: 520px;
+  min-width: 400px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -680,27 +763,29 @@ body {
 }
 
 /* ── 凡例パネル（上段・改修: width削除→flex比率で高さ確保） ── */
+/* 改修(表拡大): padding8px6px→12px9px, gap4→6 */
 .legend-panel {
   flex: 1 1 40%;
-  min-height: 120px;
+  min-height: 180px;
   background: #f8fafc;
-  padding: 8px 6px;
+  padding: 12px 9px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 /* ── フォーム未表示時プレースホルダ（改修） ── */
+/* 改修(表拡大): font11→16, padding16→24 */
 .form-empty {
   flex: 1 1 60%;
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
-  font: 11px 'Meiryo UI', sans-serif;
+  font: 16px 'Meiryo UI', sans-serif;
   color: #94a3b8;
-  padding: 16px;
+  padding: 24px;
   border-top: 1px solid #e2e8f0;
   line-height: 1.6;
 }
@@ -713,94 +798,105 @@ body {
   overflow: hidden;
   border-top: 1px solid #cbd5e1;
 }
+/* 改修(表拡大): padding10px14px→15px21px, font12→18 */
 .form-pane-header {
   background: #4f46e5;
   color: #fff;
-  padding: 10px 14px;
-  font: bold 12px 'Meiryo UI', sans-serif;
+  padding: 15px 21px;
+  font: bold 18px 'Meiryo UI', sans-serif;
   flex-shrink: 0;
 }
 /* 改修: フォーム本体領域（独立スクロール） */
+/* 改修(表拡大): padding12px14px6px→18px21px9px */
 .form-pane-body {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 14px 6px;
+  padding: 18px 21px 9px;
 }
+/* 改修(表拡大): gap8→12, padding6px14px10px→9px21px15px */
+/* 改修(幅調整): side-panel縮小によりgap12→8へ再調整（4ボタンを1行に収めるため） */
 .form-pane-footer {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 14px 10px;
+  padding: 9px 21px 15px;
   flex-shrink: 0;
   border-top: 1px solid #e2e8f0;
   background: #f8fafc;
 }
 /* 改修: フォームペインの削除ボタン・利用終了ボタン（サイズは dialog-footer と同じ） */
+/* 改修(表拡大): border-radius8→12, padding0 16px→0 24px, height36→54, font-size11→16 */
+/* 改修(幅調整): side-panel縮小に合わせてキャンセル/保存ボタンと揃えて縮小 */
 .form-pane-footer .btn-delete,
 .form-pane-footer .btn-terminate {
-  border-radius: 8px; padding: 0 16px; height: 36px; font-size: 11px;
+  border-radius: 8px; padding: 0 14px; height: 46px; font-size: 13px;
 }
 /* 改修(休日設定): 休日設定ダイアログの登録済み休日一覧 */
 .holiday-list {
   list-style: none;
-  margin: 6px 0 0;
+  margin: 9px 0 0;
   padding: 0;
 }
+/* 改修(表拡大): padding4px6px→6px9px, font12→18 */
 .holiday-list-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 6px;
+  padding: 6px 9px;
   border-bottom: 1px solid #e2e8f0;
-  font-size: 12px;
+  font-size: 18px;
 }
 .holiday-list-empty {
   color: #94a3b8;
-  font-size: 12px;
-  padding: 4px 6px;
+  font-size: 18px;
+  padding: 6px 9px;
 }
+/* 改修(表拡大): font11→16 */
 .legend-title {
-  font: bold 11px 'Meiryo UI', sans-serif;
+  font: bold 16px 'Meiryo UI', sans-serif;
   color: #374151;
-  padding: 2px 2px 6px;
+  padding: 3px 3px 9px;
   border-bottom: 1px solid #e2e8f0;
-  margin-bottom: 2px;
+  margin-bottom: 3px;
 }
 .legend-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   position: relative;
 }
+/* 改修(表拡大): width/height18→27 */
 .legend-swatch {
-  width: 18px;
-  height: 18px;
+  width: 27px;
+  height: 27px;
   border-radius: 3px;
   border: 1px solid #94a3b8;
   cursor: pointer;
   flex-shrink: 0;
 }
 .legend-swatch:hover { box-shadow: 0 0 0 2px #4f46e5; }
+/* 改修(表拡大): height22→33, font10→15 */
 .legend-name-input {
   flex: 1;
-  height: 22px;
-  font: 10px 'Meiryo UI', sans-serif;
+  height: 33px;
+  font: 15px 'Meiryo UI', sans-serif;
   border: 1px solid #e2e8f0;
   border-radius: 4px;
-  padding: 1px 4px;
+  padding: 2px 6px;
   color: #1e293b;
   background: #fff;
   min-width: 0;
 }
 .legend-name-input:focus { border-color: #4f46e5; outline: none; }
+/* 改修(表拡大): width/height18→27, font11→16 */
 .legend-del-btn {
-  width: 18px;
-  height: 18px;
+  width: 27px;
+  height: 27px;
   border: none;
   border-radius: 3px;
   background: #e5e7eb;
   color: #6b7280;
-  font-size: 11px;
+  font-size: 16px;
   cursor: pointer;
   flex-shrink: 0;
   line-height: 1;
@@ -810,38 +906,41 @@ body {
   justify-content: center;
 }
 .legend-del-btn:hover { background: #fca5a5; color: #dc2626; }
+/* 改修(表拡大): height26→39, font10→15 */
 .legend-add-btn {
-  margin-top: 6px;
-  height: 26px;
+  margin-top: 9px;
+  height: 39px;
   border: 1px dashed #94a3b8;
   border-radius: 6px;
   background: transparent;
   color: #4f46e5;
-  font: 10px 'Meiryo UI', sans-serif;
+  font: 15px 'Meiryo UI', sans-serif;
   cursor: pointer;
   width: 100%;
 }
 .legend-add-btn:hover { background: #ede9fe; }
 
 /* カラーパレット ポップオーバー */
+/* 改修(表拡大): top22→33, width132→198, gap4→6, padding6→9 */
 .color-popover {
   position: absolute;
   left: 0;
-  top: 22px;
+  top: 33px;
   background: #fff;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
-  padding: 6px;
+  padding: 9px;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  width: 132px;
+  gap: 6px;
+  width: 198px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.2);
   z-index: 200;
 }
+/* 改修(表拡大): width/height20→30 */
 .palette-swatch {
-  width: 20px;
-  height: 20px;
+  width: 30px;
+  height: 30px;
   border-radius: 3px;
   border: 1px solid #94a3b8;
   cursor: pointer;
@@ -862,9 +961,10 @@ body {
   background: linear-gradient(to top left, transparent 45%, #888 46%, #888 54%, transparent 55%);
 }
 /* 改修: 任意色入力ボタン（パレット末尾に配置） */
+/* 改修(表拡大): width/height20→30 */
 .palette-custom {
-  width: 20px;
-  height: 20px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   border: 1px solid #94a3b8;
   border-radius: 3px;
@@ -875,12 +975,13 @@ body {
 .legend-select-wrap {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 9px;
   flex: 1;
 }
+/* 改修(表拡大): width/height18→27 */
 .legend-select-swatch {
-  width: 18px;
-  height: 18px;
+  width: 27px;
+  height: 27px;
   border-radius: 3px;
   border: 1px solid #94a3b8;
   flex-shrink: 0;
@@ -911,26 +1012,28 @@ body {
   vertical-align: middle;
 }
 /* 機種名テキストspan（削除ボタンと重ならないよう右パディングを確保し、省略表示） */
+/* 改修(表拡大): padding-right20→30 */
 .machine-name {
   display: block;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding-right: 20px; /* 絶対配置の削除ボタン（16px）と重ならないよう右端に余白 */
+  padding-right: 30px; /* 絶対配置の削除ボタン（24px）と重ならないよう右端に余白 */
 }
 /* 改修: 筐体削除ボタン（×）：絶対配置で右端に配置、hover時のみ表示 */
+/* 改修(表拡大): width/height16→24, font-size11→16 */
 .machine-del-btn {
   position: absolute;   /* td.machine-col（position:sticky）を包含ブロックとして使用 */
-  right: 4px;
+  right: 6px;
   top: 50%;
   transform: translateY(-50%);
-  width: 16px;
-  height: 16px;
+  width: 24px;
+  height: 24px;
   border: none;
   border-radius: 3px;
   background: transparent;
   color: #6b7280;
-  font-size: 11px;
+  font-size: 16px;
   cursor: pointer;
   line-height: 1;
   padding: 0;
@@ -946,8 +1049,9 @@ body {
 /* 改修: 筐体追加行（筐体Tの下の「＋」ボタン行）
    背景色は指定しない → machine-col は .gantt-table td.machine-col (#e2e8f0)、
    日付セルは .gantt-table td.gantt-cell (#fff) のスタイルをそのまま適用する */
+/* 改修(表拡大): height30→45 */
 .machine-add-row td {
-  height: 30px; /* 通常セルと同じ高さ */
+  height: 45px; /* 通常セルと同じ高さ */
 }
 .machine-add-row td.machine-col {
   background: #e2e8f0; /* 改修: 他の筐体行と同一背景色に統一 */
@@ -955,14 +1059,15 @@ body {
   vertical-align: middle;
 }
 /* 丸型「＋」追加ボタン */
+/* 改修(表拡大): width/height22→33, font-size16→24 */
 .machine-add-btn {
-  width: 22px;
-  height: 22px;
+  width: 33px;
+  height: 33px;
   border-radius: 50%;
   border: 1.5px solid #94a3b8;
   background: #f0f4f8;
   color: #374151;
-  font-size: 16px;
+  font-size: 24px;
   cursor: pointer;
   line-height: 1;
   padding: 0;
@@ -975,8 +1080,9 @@ body {
 .gantt-table td.machine-add-cell { cursor: default; }
 
 /* 改修: 予備区切り行（メイン筐体と予備の間の空白行：通常セル1行分の高さ・装飾なし） */
+/* 改修(表拡大): height30→45 */
 .spare-divider-row td {
-  height: 30px;
+  height: 45px;
   background: #fff;
   padding: 0;
 }
@@ -1012,10 +1118,11 @@ body {
 }
 
 /* 改修(第4回): ルーム切替プルダウン */
+/* 改修(表拡大): margin-left12→18, padding4px8px→6px12px, font-size13→20 */
 .room-select {
-  margin-left: 12px;
-  padding: 4px 8px;
-  font-size: 13px;
+  margin-left: 18px;
+  padding: 6px 12px;
+  font-size: 20px;
   border: 1px solid #94a3b8;
   border-radius: 6px;
   background: #f8fafc;
@@ -1035,72 +1142,81 @@ body {
 .accept-page {
   overflow-y: auto;
 }
+/* 改修(表拡大): max-width600→900, margin24px→36px, padding0 16px40px→0 24px60px */
 .accept-container {
-  max-width: 600px;
-  margin: 24px auto;
-  padding: 0 16px 40px;
+  max-width: 900px;
+  margin: 36px auto;
+  padding: 0 24px 60px;
 }
+/* 改修(表拡大): font15→22, margin-bottom16→24 */
 .accept-heading {
-  font-size: 15px;
+  font-size: 22px;
   font-weight: bold;
   color: #1e293b;
-  margin-bottom: 16px;
+  margin-bottom: 24px;
 }
+/* 改修(表拡大): padding14px16px→21px24px, margin-bottom14→21 */
 .accept-card {
   background: #fff;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
-  padding: 14px 16px;
-  margin-bottom: 14px;
+  padding: 21px 24px;
+  margin-bottom: 21px;
 }
 /* 辞退ブロックはボーダーを赤系に */
 .accept-card-reject {
   border-color: #fca5a5;
 }
+/* 改修(表拡大): font12→18, margin-bottom10→15 */
 .accept-card-title {
-  font-size: 12px;
+  font-size: 18px;
   font-weight: bold;
   color: #374151;
-  margin: 0 0 10px;
+  margin: 0 0 15px;
 }
+/* 改修(表拡大): font11→16, margin-bottom8→12 */
 .accept-note {
-  font-size: 11px;
+  font-size: 16px;
   color: #64748b;
-  margin: 0 0 8px;
+  margin: 0 0 12px;
 }
 /* 改修: 承知前の注意事項（終了メール返信・初期状態復帰確認）を強調表示 */
+/* 改修(表拡大): padding8px10px→12px15px */
 .accept-warning {
   color: #b91c1c;
   font-weight: bold;
   background: #fef2f2;
   border: 1px solid #fca5a5;
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: 12px 15px;
 }
+/* 改修(表拡大): font12→18 */
 .accept-info-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 18px;
 }
+/* 改修(表拡大): width90→135, padding4px6px→6px9px */
 .accept-info-table th {
-  width: 90px;
+  width: 135px;
   text-align: left;
   color: #64748b;
-  padding: 4px 6px;
+  padding: 6px 9px;
   font-weight: normal;
 }
 .accept-info-table td {
-  padding: 4px 6px;
+  padding: 6px 9px;
   color: #1e293b;
 }
 /* 改修(複数行予約表示調整): 機種名を複数行列挙する際、行間に軽い余白を付ける（1行目は余白なし） */
 #accept-info-machines > div + div {
-  margin-top: 2px;
+  margin-top: 3px;
 }
+/* 改修(表拡大): margin-top10→15 */
 .accept-card-footer {
   display: flex;
   justify-content: flex-end;
-  margin-top: 10px;
+  margin-top: 15px;
 }
 
 /* 改修: 処理中オーバーレイ（メール送信・ステータス変更の実行中に操作をブロックする） */
@@ -1115,26 +1231,29 @@ body {
   justify-content: center;
   z-index: 9999;
 }
+/* 改修(表拡大): gap12→18, padding24px32px→36px48px */
 .busy-box {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 18px;
   background: #fff;
-  padding: 24px 32px;
+  padding: 36px 48px;
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
 }
+/* 改修(表拡大): width/height36→54, border4px→6px */
 .busy-spinner {
-  width: 36px;
-  height: 36px;
-  border: 4px solid #dbeafe;
+  width: 54px;
+  height: 54px;
+  border: 6px solid #dbeafe;
   border-top-color: #1d4ed8;
   border-radius: 50%;
   animation: busy-spin 0.8s linear infinite;
 }
+/* 改修(表拡大): font13→20 */
 .busy-text {
-  font: 600 13px 'Meiryo UI', sans-serif;
+  font: 600 20px 'Meiryo UI', sans-serif;
   color: #1e3a5f;
 }
 @keyframes busy-spin { to { transform: rotate(360deg); } }

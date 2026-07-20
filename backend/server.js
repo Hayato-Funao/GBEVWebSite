@@ -340,6 +340,29 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 改修(?idなし事務局ページ対応): GET /api/action-items — 事務局アクションリストの一覧を取得。
+  // ?id=無しの事務局ページで「＋登録」時に紐付け先の案件を選ばせるケースピッカー用。
+  // 既に予約が紐づいている案件（ステータス1/3/9/10等）を選ばせて二重登録を招かないよう、
+  // ステータス0（仮申請受領前）・91（申請者取り下げ）のみに絞って返す
+  if (pathname === '/api/action-items' && method === 'GET') {
+    if (IS_DUMMY) {
+      return jsonOk(res, [
+        { id: 1, category: '統合HILS利用', applicant: 'テスト太郎',   usage: '機種X 検証', machineType: '機種X', status: '0.仮申請受領前', email: '' },
+        { id: 2, category: '統合HILS利用', applicant: 'テスト花子',   usage: '機種Y 検証', machineType: '機種Y', status: '91.申請者取り下げ', email: '' },
+      ]);
+    }
+    try {
+      const items = await sp.runCommand('list_action_items', []);
+      const list  = items.map(normalizeActionItem)
+        .filter(it => ['0', '91'].includes(actionStatusNum(it.status)));
+      jsonOk(res, list);
+    } catch (e) {
+      console.error('GET /api/action-items:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
+  }
+
   // 改修(第12回): GET /api/action-item/:id — 事務局アクションリストの単一行を取得
   // 改修: idはTitle列の値（非数値・日本語も許容）。復号してPythonに渡す
   const actionItemMatch = pathname.match(/^\/api\/action-item\/([^\/]+)$/);
@@ -1009,6 +1032,9 @@ function normalizeSpItem(item) {
         ? item['OData__x4e8b__x52d9__x5c40__x30a2__x30'] : null,
   };
 }
+
+// 改修(?idなし事務局ページ対応): ステータス"N.xxxx"の先頭番号を返す（フロントのactionStatusNumと同一ロジック）
+function actionStatusNum(s) { return String(s || '').split('.')[0]; }
 
 // 改修(第12回): 事務局アクションリスト行のSP列名→フロント項目変換
 function normalizeActionItem(item) {
