@@ -1205,7 +1205,12 @@ body {
   overflow-y: auto;
 }
 /* 改修(表拡大): max-width600→900, margin24px→36px, padding0 16px40px→0 24px60px */
+/* 改修(不具合修正): 親.accept-page.activeがdisplay:flexのflexアイテムとなったことで、
+   width未指定+margin:autoでは「現在表示中の対応(辞退/期間変更等)の内容量」に応じて
+   shrink-to-fitされ、対応の切替ごとにカード幅が変わってしまっていた。
+   width:100%を明示し、max-width:900pxまで常に幅を確保して切替時の幅変動を無くす */
 .accept-container {
+  width: 100%;
   max-width: 900px;
   margin: 36px auto;
   padding: 0 24px 60px;
