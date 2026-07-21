@@ -198,6 +198,9 @@ body {
   border-bottom: 1px solid #94a3b8;
   height: 99px;
   z-index: 5;
+  /* 改修(見出し行縦固定): topが未指定だと縦スクロール時にこの見出しセルが固定されず流れてしまうため、
+     月見出し行(top:0)と揃えて上端に固定する */
+  top: 0;
 }
 
 /* 行ヘッダー（機種名） */
@@ -231,6 +234,9 @@ body {
   font: bold 16px 'Meiryo UI', sans-serif;
   /* 日付ヘッダー(z-index:4)より上に置き、左上コーナーセルが隠れないようにする */
   z-index: 5;
+  /* 改修(見出し行縦固定): topが未指定だと縦スクロール時にこの見出しセルが固定されず流れてしまうため、
+     月見出し行(top:0)と揃えて上端に固定する */
+  top: 0;
 }
 
 /* 改修: アドレス列（列順入れ替えにより左端に sticky 固定。筐体ごとの手入力識別情報でメールアドレスとは別物。南HILSルームのみ表示） */
@@ -261,6 +267,9 @@ body {
   height: 99px;
   font: bold 16px 'Meiryo UI', sans-serif;
   z-index: 5;
+  /* 改修(見出し行縦固定): topが未指定だと縦スクロール時にこの見出しセルが固定されず流れてしまうため、
+     月見出し行(top:0)と揃えて上端に固定する */
+  top: 0;
 }
 /* 改修: アドレス列 非表示クラス（南HILSルーム以外で全行のアドレス列を一括非表示）
    改修(不具合修正): display:none はセルを列カウントから除外してしまい、table-layout:fixed の
@@ -295,6 +304,9 @@ body {
   height: 99px;
   font: bold 16px 'Meiryo UI', sans-serif;
   z-index: 5;
+  /* 改修(見出し行縦固定): topが未指定だと縦スクロール時にこの見出しセルが固定されず流れてしまうため、
+     月見出し行(top:0)と揃えて上端に固定する */
+  top: 0;
 }
 /* 改修: 担当者列 非表示クラス（チェックボックス連動／南HILSルーム強制非表示）
    #gantt-table に .assignee-hidden を付与することで全行の担当者列を一括で非表示にする
@@ -899,6 +911,9 @@ body {
   align-items: center;
   gap: 6px;
   position: relative;
+  /* 改修(凡例追加ボタン縦幅修正): 凡例パネルはflex-column+overflow-y:autoのため、
+     flex-shrinkが既定値(1)のままだと凡例が多い時に各行が縮んでしまう。行の高さを保持する */
+  flex-shrink: 0;
 }
 /* 改修(表拡大): width/height18→27 */
 .legend-swatch {
@@ -941,10 +956,13 @@ body {
   justify-content: center;
 }
 .legend-del-btn:hover { background: #fca5a5; color: #dc2626; }
-/* 改修(表拡大): height26→39, font10→15 */
+/* 改修(凡例追加ボタン縦幅修正): 凡例入力欄(.legend-name-input)と縦幅を揃えるためheight39→33。
+   また凡例パネルはflex-column+overflow-y:autoのため、flex-shrinkが既定値(1)のままだと
+   凡例が多い時に他の行より大きく縮んでしまっていたため flex-shrink:0 で高さを保持する */
 .legend-add-btn {
   margin-top: 9px;
-  height: 39px;
+  height: 33px;
+  flex-shrink: 0;
   border: 1px dashed #94a3b8;
   border-radius: 6px;
   background: transparent;
