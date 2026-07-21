@@ -345,6 +345,10 @@ const state = {
   actionHilsRes: null,
   // 改修(第12回): URLパラメータ経由の自動記入用データ（W-4）
   autoFill:      null,
+  // 改修(案件ピッカー常時表示対応): URL(?id=)起動時の案件を「ホーム案件」として永続保持する。
+  // ケースピッカーで別案件を選んでも、次回登録ダイアログを開いた際の初期選択に使う
+  // （actionItemId等はキャンセル/登録完了時にnullリセットされるため、リセットされない別領域に保持する）
+  homeCase:      null,
   // 改修(セルコメント機能追加): セル（筐体×日付）に紐づくコメント。キーは `${room}|${machine}|${date}`
   comments:      {},
 };
@@ -447,9 +451,23 @@ function dateToIso(date) {
 }
 // 改修(休日設定廃止): 休日設定機能は廃止し、選択範囲単位の予約不可設定（status:'block'の疑似予約）に統合した。
 // 土日判定は本関数に統一する（関数名・呼び出し箇所は維持し、休日判定のみ削除）
-function isNonWorkday(date) {
+// 改修(予約不可設定の営業日反映): machineを渡した場合、その筐体の予約不可期間も非営業日として扱う
+function isNonWorkday(date, machine) {
   const wday = date.getDay();
-  return wday === 0 || wday === 6;
+  if (wday === 0 || wday === 6) return true;
+  return isBlockedDate(date, machine);
+}
+
+// 改修(予約不可設定の営業日反映): 指定日が指定筐体（現在ルーム）の予約不可期間内かどうかを判定する
+function isBlockedDate(date, machine) {
+  if (!machine) return false;
+  const iso = dateToIso(date);
+  return state.reservations.some(r =>
+    r.status === 'block' &&
+    r.machine === machine &&
+    (r.room || 'west') === state.currentRoom &&
+    iso >= r.start && iso <= r.end
+  );
 }
 function daysInMonth(year, month) {
   return new Date(year, month, 0).getDate();
@@ -486,23 +504,23 @@ function colToDate(col) {
   return state.viewDates[col] || null;
 }
 // 土日を除外してカウントする（isNonWorkdayに統一）
-function bizDaysBetween(start, end) {
+function bizDaysBetween(start, end, machine) {
   let count = 0;
   const d = new Date(start);
   while (d <= end) {
-    if (!isNonWorkday(d)) count++;
+    if (!isNonWorkday(d, machine)) count++;
     d.setDate(d.getDate() + 1);
   }
   return count;
 }
 
-// start（含む）から数えて n 営業日目の日付（土日スキップ）
-function addBizDays(startDate, n) {
+// start（含む）から数えて n 営業日目の日付（土日・予約不可期間スキップ）
+function addBizDays(startDate, n, machine) {
   if (n <= 0) return new Date(startDate);
   const d = new Date(startDate);
   let count = 0;
   while (true) {
-    if (!isNonWorkday(d)) {
+    if (!isNonWorkday(d, machine)) {
       count++;
       if (count === n) return new Date(d);
     }
@@ -510,13 +528,13 @@ function addBizDays(startDate, n) {
   }
 }
 
-// end（含む）が n 営業日目になるような最も早い開始日（土日スキップ）
-function startForBizDays(endDate, n) {
+// end（含む）が n 営業日目になるような最も早い開始日（土日・予約不可期間スキップ）
+function startForBizDays(endDate, n, machine) {
   if (n <= 0) return new Date(endDate);
   const d = new Date(endDate);
   let count = 0;
   while (true) {
-    if (!isNonWorkday(d)) {
+    if (!isNonWorkday(d, machine)) {
       count++;
       if (count === n) return new Date(d);
     }
@@ -847,13 +865,25 @@ function openCellCommentEditor(td, machine, date, currentText) {
 
 // 改修(セルコメント機能改修): 右クリックで表示する小さなコンテキストメニュー。
 // items: [{label, onSelect}, ...]。項目クリックでonSelect実行後にメニューを除去する。
-// メニュー外クリック・Escapeキーでも除去する（1回きりのdocumentリスナーを都度登録・解除する）
-let _cellContextMenuEl = null;
+// メニュー外クリック・Escapeキーでも除去する
+let _cellContextMenuEl               = null;
+// 改修(不具合修正): 項目クリックで閉じた場合にdocumentリスナーが解除されず残留する不具合があったため、
+// 登録中のリスナーをここに保持し、closeCellContextMenu()内で必ず解除するようにした
+let _cellContextMenuOutsideHandler   = null;
+let _cellContextMenuKeyHandler       = null;
 
 function closeCellContextMenu() {
   if (_cellContextMenuEl) {
     _cellContextMenuEl.remove();
     _cellContextMenuEl = null;
+  }
+  if (_cellContextMenuOutsideHandler) {
+    document.removeEventListener('mousedown', _cellContextMenuOutsideHandler);
+    _cellContextMenuOutsideHandler = null;
+  }
+  if (_cellContextMenuKeyHandler) {
+    document.removeEventListener('keydown', _cellContextMenuKeyHandler);
+    _cellContextMenuKeyHandler = null;
   }
 }
 
@@ -878,22 +908,19 @@ function showCellContextMenu(x, y, items) {
 
   // 改修: メニュー表示直後の右クリック自身のmousedown/contextmenuで即閉じないよう、次のイベントループで登録する
   setTimeout(() => {
-    document.addEventListener('mousedown', onOutsideMouseDown);
-    document.addEventListener('keydown', onMenuKeyDown);
+    // 改修: showCellContextMenu再呼び出し等で既にメニューが閉じられていれば登録しない
+    if (_cellContextMenuEl !== menu) return;
+    _cellContextMenuOutsideHandler = e => {
+      if (menu.contains(e.target)) return;
+      closeCellContextMenu();
+    };
+    _cellContextMenuKeyHandler = e => {
+      if (e.key !== 'Escape') return;
+      closeCellContextMenu();
+    };
+    document.addEventListener('mousedown', _cellContextMenuOutsideHandler);
+    document.addEventListener('keydown', _cellContextMenuKeyHandler);
   }, 0);
-
-  function onOutsideMouseDown(e) {
-    if (menu.contains(e.target)) return;
-    closeCellContextMenu();
-    document.removeEventListener('mousedown', onOutsideMouseDown);
-    document.removeEventListener('keydown', onMenuKeyDown);
-  }
-  function onMenuKeyDown(e) {
-    if (e.key !== 'Escape') return;
-    closeCellContextMenu();
-    document.removeEventListener('mousedown', onOutsideMouseDown);
-    document.removeEventListener('keydown', onMenuKeyDown);
-  }
 }
 
 // 改修(SP連携マージ): SP列に対応する最小項目を組み立てる
@@ -1126,8 +1153,9 @@ function buildResCellMap(reservations) {
       // 改修(第7回): 列インデックスを dateToCol で算出
       const col  = dateToCol(d);
       if (col === null) continue;
-      // 土日はバー描画をスキップする
-      if (isNonWorkday(d)) continue;
+      // 改修(予約不可設定を土日と同様に扱う): 通常予約は自筐体の予約不可期間もバー描画をスキップする
+      // （予約不可セル自身の描画は対象外。自身のstatus==='block'を土日以外でスキップすると描画されなくなる）
+      if (resStatus === 'block' ? isNonWorkday(d) : isNonWorkday(d, res.machine)) continue;
       if (firstCol === null) firstCol = col;
       lastCol = col;
       map[res.machine][col] = {
@@ -1766,6 +1794,9 @@ function renderCalendar() {
         commentEl.textContent = commentText;
         commentEl.title       = commentText;
         td.appendChild(commentEl);
+        // 改修(不具合修正): res-labelのres-edge-left同様、隣接する選択セル(z-index:1)より
+        // 前面に出すためセル自身のz-indexを上げる（CSS側の.has-comment、固定列より背面のまま）
+        td.classList.add('has-comment');
       }
 
       // プレビュー上書き
@@ -1927,7 +1958,7 @@ function onResMouseDown(e) {
   _drag.origRow      = row;
   _drag.origStart    = origStart;
   _drag.origEnd      = origEnd;
-  _drag.origBiz      = bizDaysBetween(origStart, origEnd);
+  _drag.origBiz      = bizDaysBetween(origStart, origEnd, res.machine);
   _drag.clickCol     = col;
   _drag.previewCells = null;
   _drag.ghostCells   = null;
@@ -1953,10 +1984,10 @@ function cellFromPoint(x, y) {
   return { row: parseInt(td.dataset.row), col: parseInt(td.dataset.col) };
 }
 
-// 土日をスキップして直近の予約可能日を返す
-function nearestWeekday(date, forward) {
+// 土日・予約不可期間をスキップして直近の予約可能日を返す
+function nearestWeekday(date, forward, machine) {
   const d = new Date(date);
-  while (isNonWorkday(d)) {
+  while (isNonWorkday(d, machine)) {
     d.setDate(d.getDate() + (forward ? 1 : -1));
   }
   return d;
@@ -1992,22 +2023,24 @@ function onDragResMove(e) {
     }
     const offset = clickCol - origDispCol;
     const nsCol  = Math.max(0, Math.min(curCol - offset, totalCols - 1));
-    const ns     = nearestWeekday(new Date(viewDates[nsCol]), true);
+    // 改修(予約不可設定の営業日反映): 移動先の行（筐体）の予約不可期間を基準にスキップする
+    const targetMachine = getAllMachines()[curRow];
+    const ns     = nearestWeekday(new Date(viewDates[nsCol]), true, targetMachine);
     // 改修(第7回): MAX_BIZ_DAYS クランプ撤廃。元の営業日数をそのまま適用
-    const ne     = addBizDays(ns, origBiz);
+    const ne     = addBizDays(ns, origBiz, targetMachine);
     newStart     = ns;
     newEnd       = ne;
     newRow       = curRow;
   } else if (mode === 're') {
-    let ne = nearestWeekday(curDate, false);
-    if (ne < origStart) ne = nearestWeekday(new Date(origStart), true);
+    let ne = nearestWeekday(curDate, false, res.machine);
+    if (ne < origStart) ne = nearestWeekday(new Date(origStart), true, res.machine);
     // 改修(第7回): MAX_BIZ_DAYS による再クランプ撤廃
     newStart = new Date(origStart);
     newEnd   = ne;
     newRow   = origRow;
   } else if (mode === 'rs') {
-    let ns = nearestWeekday(curDate, true);
-    if (ns > origEnd) ns = nearestWeekday(new Date(origEnd), false);
+    let ns = nearestWeekday(curDate, true, res.machine);
+    if (ns > origEnd) ns = nearestWeekday(new Date(origEnd), false, res.machine);
     // 改修(第7回): MAX_BIZ_DAYS による再クランプ撤廃
     newStart = ns;
     newEnd   = new Date(origEnd);
@@ -2023,14 +2056,15 @@ function onDragResMove(e) {
   const previewCells = new Set();
   const ghostCells   = new Set();
 
-  // 土日はプレビュー/ゴースト対象から除外する
+  // 土日・予約不可期間はプレビュー/ゴースト対象から除外する
+  const previewMachine = getAllMachines()[newRow];
   for (let d = new Date(newStart); d <= newEnd; d.setDate(d.getDate() + 1)) {
     const c = dateToCol(d);
-    if (c !== null && !isNonWorkday(d)) previewCells.add(`${newRow}-${c}`);
+    if (c !== null && !isNonWorkday(d, previewMachine)) previewCells.add(`${newRow}-${c}`);
   }
   for (let d = new Date(origStart); d <= origEnd; d.setDate(d.getDate() + 1)) {
     const c = dateToCol(d);
-    if (c !== null && !isNonWorkday(d)) ghostCells.add(`${origRow}-${c}`);
+    if (c !== null && !isNonWorkday(d, res.machine)) ghostCells.add(`${origRow}-${c}`);
   }
 
   _drag.previewCells = previewCells;
@@ -2079,6 +2113,31 @@ function onDragResUp() {
         const spId = state.reservations[resId].spId;
         if (spId != null) apiUpdate(spId, state.reservations[resId]);
 
+        // 改修(ドラッグ編集連携): ドラッグでの移動・期間変更後も、編集した予約自身の案件の
+        // 事務局アクションリスト・ステータスを「1.仮申請受領」へ戻す（ダイアログ編集W-12と同一挙動）。
+        // 対象は掴んだ予約本体のみ。連動兄弟予約には適用しない（案件連携は主筐体のみの既存方針）。
+        (async () => {
+          const ref = await resolveActionRef(state.reservations[resId]);
+          if (!ref || ref.id == null) return;  // 案件連携なしの予約（予備日等）は更新不要
+          try {
+            const r = await fetch(`/api/action-item/${ref.id}/status`, {
+              method:  'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ status: '1.仮申請受領' }),
+            });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              console.error('ステータス更新失敗:', err);
+              setStatus(`ステータス更新に失敗しました: ${err.error || r.status}`, '#ef4444');
+            } else if (String(ref.title) === String(state.actionTitleId)) {
+              // 改修: 1案件=1予約ガード用に現在ステータスを追従（起動時案件自身を編集した場合のみ）
+              state.actionStatus = '1.仮申請受領';
+            }
+          } catch (e) {
+            console.error('ドラッグ編集後アクションリスト更新エラー:', e);
+          }
+        })();
+
         // 改修: 連動する兄弟予約の日程を追従（筐体行は変更しない）
         for (const sId of siblingIds) {
           state.reservations[sId] = {
@@ -2110,6 +2169,12 @@ function checkOverlap(excludeResId, machine, ns, ne) {
   return state.reservations.some((res, idx) => {
     if (idx === excludeResId) return false;
     if (res.machine !== machine) return false;
+    // 改修(不具合修正): 予約不可セル（status:'block'の疑似予約）は土日と同様に扱い、
+    // 重複判定の対象から除外する。ドラッグ範囲の実使用日はaddBizDays/nearestWeekdayで
+    // 既に予約不可期間をスキップして算出済みのため、範囲がまたぐだけなら重複ではない。
+    // 除外前は予約不可セルをまたぐドラッグ移動・リサイズが常にgrabbedOverlap=trueとなり
+    // 確定できなかった（土日はこの疑似予約自体が存在しないため影響を受けていなかった）
+    if (res.status === 'block') return false;
     const rs = isoToDate(res.start);
     const re = isoToDate(res.end);
     return !(ne < rs || ns > re);
@@ -2161,9 +2226,11 @@ function onCellMouseOver(e) {
 
   state.selectedCells = new Set();
   for (let r = minRow; r <= maxRow; r++) {
+    // 改修(予約不可設定を土日と同様に扱う): 行（筐体）ごとの予約不可期間も選択対象から除外する
+    const rowMachine = getAllMachines()[r];
     for (let c = minCol; c <= maxCol; c++) {
-      // 土日は選択対象から除外する
-      if (!isNonWorkday(state.viewDates[c])) state.selectedCells.add(`${r}-${c}`);
+      // 土日・予約不可期間は選択対象から除外する
+      if (!isNonWorkday(state.viewDates[c], rowMachine)) state.selectedCells.add(`${r}-${c}`);
     }
   }
   renderCalendar();
@@ -2241,7 +2308,7 @@ function updateInfoPanel() {
   const res   = reservations[selectedResId];
   const start = isoToDate(res.start);
   const end   = isoToDate(res.end);
-  const biz   = bizDaysBetween(start, end);
+  const biz   = bizDaysBetween(start, end, res.machine);
 
   let periodStr;
   if (start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth()) {
@@ -2407,7 +2474,11 @@ document.addEventListener('mousedown', e => {
   const inReg     = e.target.closest('#register-btn');
   // 改修: モーダル廃止に伴い、サイドパネル内クリックでも選択を維持
   const inDialog  = e.target.closest('#side-panel');
-  if (!inCell && !inInfo && !inReg && !inDialog) {
+  // 改修(不具合修正): 予約不可ボタン・セル右クリックメニューが許可リストに無かったため、
+  // クリック直後のmousedownで選択が消え、続くclickハンドラが空の選択を見てしまっていた
+  const inBlockadeBtn = e.target.closest('#blockade-btn');
+  const inContextMenu = e.target.closest('.cell-context-menu');
+  if (!inCell && !inInfo && !inReg && !inDialog && !inBlockadeBtn && !inContextMenu) {
     clearSelection();
     renderCalendar();
   }
@@ -2650,7 +2721,7 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
     alert('変更後終了日が変更後開始日より前です');
     return;
   }
-  // 改修(第14回): 希望終了日・申請理由をSPにPATCH＋ステータスを9.期間変更申請中に更新＋PMO通知 W-10
+  // 改修(第14回): 希望終了日・申請理由をSPにPATCH＋ステータスを9.期間変更申請中に更新＋事務局通知 W-10
   // 改修(URL ID非依存化): 対象予約を先に確定し、resolveActionRefでSP内部IDを解決する
   // （URL ?id= が無い場合は選択予約の事務局アクションリストID列から解決する）
   const curRes = state.actionHilsRes || (state.selectedResId != null ? state.reservations[state.selectedResId] : null);
@@ -2667,7 +2738,7 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
       // 改修: 1案件=1予約ガード用に現在ステータスを追従（サーバ側でステータスを9.期間変更申請中に更新）
       state.actionStatus = '9.期間変更申請中';
     }
-    // ② PMOへ期間変更申請通知メール（改修(メール文面): 提案資料⑤に合わせて件名・本文を更新）
+    // ② 事務局へ期間変更申請通知メール（改修(メール文面): 提案資料⑤に合わせて件名・本文を更新）
     const extMachine = curRes?.machine || '';
     const curStart   = curRes?.start   || '';
     const curEnd     = curRes?.end     || '';
@@ -2678,7 +2749,7 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
     await sendMail(
       mailConfig.pmoTo,
       buildMailSubject('期間変更申請の通知', extMachine, resolveMailAddress(extMachine), _group.count),
-      `PMO ご担当者 様\n\n` +
+      `事務局 ご担当者 様\n\n` +
       `下記予約について、申請者より期間変更の申請がありました。\n\n` +
       `■対象予約\n` +
       ` 予約ID  : ${extTitleId}\n` +
@@ -2692,7 +2763,7 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
       mailSignature(),
       mailConfig.pmoCc
     );
-    setStatus('期間変更申請を送信しました。PMOへ通知しました。');
+    setStatus('期間変更申請を送信しました。事務局へ通知しました。');
     // 改修: extend-paneを閉じてプレースホルダを表示
     closeFormPane();
   } catch (e) {
@@ -2721,7 +2792,7 @@ document.getElementById('info-cancel-btn').addEventListener('click', () => {
   state.formMode = null;
 });
 
-// 改修: 利用取消依頼「依頼」ボタン — 取消理由を事務局アクションリストへ記録＋PMOへ通知メール送信
+// 改修: 利用取消依頼「依頼」ボタン — 取消理由を事務局アクションリストへ記録＋事務局へ通知メール送信
 // （期間変更申請と同様に理由を残す。ステータスはここでは変更しない）
 document.getElementById('cancel-ok').addEventListener('click', async () => {
   const cancelReason = document.getElementById('cancel-reason').value.trim();
@@ -2743,7 +2814,7 @@ document.getElementById('cancel-ok').addEventListener('click', async () => {
         body:    JSON.stringify({ reason: cancelReason }),
       });
     }
-    // ② PMOへ利用取消依頼通知メール送信（本文に取消理由を必ず記載）
+    // ② 事務局へ利用取消依頼通知メール送信（本文に取消理由を必ず記載）
     // 改修: 複数筐体一括登録の連動予約があれば件名・本文に付記する
     const _group = getGroupMailInfo(cancelRes);
     // 改修(URL ID非依存化): 予約ID表示はstate.actionTitleId優先、無ければ解決済みcancelRef.titleで代替
@@ -2751,7 +2822,7 @@ document.getElementById('cancel-ok').addEventListener('click', async () => {
     await sendMail(
       mailConfig.pmoTo,
       buildMailSubject('利用取消依頼の通知', cancelMachine, resolveMailAddress(cancelMachine), _group.count),
-      `PMO ご担当者 様\n\n` +
+      `事務局 ご担当者 様\n\n` +
       `下記予約について、申請者より利用取消の依頼がありました。\n\n` +
       `■対象予約\n` +
       ` 予約ID  : ${cancelTitleId}\n` +
@@ -2763,7 +2834,7 @@ document.getElementById('cancel-ok').addEventListener('click', async () => {
       mailSignature(),
       mailConfig.pmoCc
     );
-    setStatus('利用取消依頼を送信しました。PMOへ通知しました。');
+    setStatus('利用取消依頼を送信しました。事務局へ通知しました。');
     closeFormPane();
   } catch (e) {
     console.error('利用取消依頼エラー:', e);
@@ -2792,7 +2863,7 @@ document.getElementById('info-report-btn').addEventListener('click', async () =>
     await sendMail(
       mailConfig.pmoTo,
       buildMailSubject('利用終了報告', reportRes?.machine || '', resolveMailAddress(reportRes?.machine), _group.count),
-      `PMO ご担当者 様\n\n` +
+      `事務局 ご担当者 様\n\n` +
       `下記予約について、使用者より利用終了の報告がありました。\n` +
       `HILSの初期状態復帰の確認をお願いします。\n\n` +
       `■対象予約\n` +
@@ -2804,7 +2875,7 @@ document.getElementById('info-report-btn').addEventListener('click', async () =>
       mailSignature(),
       mailConfig.pmoCc
     );
-    setStatus('利用終了報告を送信しました。PMOへ通知しました。');
+    setStatus('利用終了報告を送信しました。事務局へ通知しました。');
   } catch (e) {
     console.error('利用終了報告エラー:', e);
     setStatus('利用終了報告の送信に失敗しました', 'red');
@@ -2852,7 +2923,7 @@ document.getElementById('accept-action').addEventListener('change', e => {
   });
 });
 
-// 変更依頼: 事務局アクションリストへ「期間変更」記録＋PMOへ予約内容変更依頼メール送信
+// 変更依頼: 事務局アクションリストへ「期間変更」記録＋事務局へ予約内容変更依頼メール送信
 async function runAcceptChange() {
   const reason = document.getElementById('accept-change-reason').value.trim();
   if (!reason) {
@@ -2876,7 +2947,7 @@ async function runAcceptChange() {
       mailConfig.pmoTo,
       // 改修: 件名を「予約内容変更」から「日程変更」に変更（実質は使用期間の変更依頼のため）
       buildMailSubject('日程変更のご依頼', chgMachine, resolveMailAddress(chgMachine), chgSiblingCount),
-      `PMO ご担当者 様\n\n` +
+      `事務局 ご担当者 様\n\n` +
       `下記予約について、申請者より使用期間の変更依頼がありました。\n\n` +
       `■対象予約\n` +
       ` 予約ID  : ${state.actionTitleId}\n` +
@@ -2899,7 +2970,7 @@ async function runAcceptChange() {
   }
 }
 
-// 承知: 事務局アクションリストへ「承知」記録＋PMOへ承知メール
+// 承知: 事務局アクションリストへ「承知」記録＋事務局へ承知メール
 // 承知時はステータス変更しない（1.仮申請受領を維持）
 async function runAcceptOk() {
   // URLのidはTitle値のため、SP内部IDを保持したstate.actionItemIdを使用する
@@ -2908,7 +2979,7 @@ async function runAcceptOk() {
   try {
     // ① アクションリストの承知/辞退/期間変更列を「承知」に更新
     await patchActionAccept(acceptId, '承知');
-    // ② PMOへ承知メール送信（改修(メール文面): 提案資料③に合わせて件名・本文を更新）
+    // ② 事務局へ承知メール送信（改修(メール文面): 提案資料③に合わせて件名・本文を更新）
     const okMachine = state.actionHilsRes?.machine || '';
     // 改修(複数行予約対応): 件名の「他N件」は同一申請に紐づく予約行数-1（先頭以外の件数）
     const okList = state.actionHilsResList || [];
@@ -2916,7 +2987,7 @@ async function runAcceptOk() {
     await sendMail(
       mailConfig.pmoTo,
       buildMailSubject('使用承知の通知', okMachine, resolveMailAddress(okMachine), okSiblingCount),
-      `PMO ご担当者 様\n\n` +
+      `事務局 ご担当者 様\n\n` +
       `下記予約について、申請者より使用を「承知」する旨の回答がありました。\n\n` +
       `■対象予約\n` +
       ` 予約ID : ${state.actionTitleId}\n` +
@@ -2925,7 +2996,7 @@ async function runAcceptOk() {
       mailSignature(),
       mailConfig.pmoCc
     );
-    setStatus('承知しました。PMOへ通知を送信しました。');
+    setStatus('承知しました。事務局へ通知を送信しました。');
   } catch (e) {
     console.error('承知処理エラー:', e);
     setStatus('承知処理に失敗しました', 'red');
@@ -2934,7 +3005,7 @@ async function runAcceptOk() {
   }
 }
 
-// 辞退: ステータスを91.申請者取り下げに更新＋使用履歴リスト削除＋PMOへ辞退メール
+// 辞退: ステータスを91.申請者取り下げに更新＋使用履歴リスト削除＋事務局へ辞退メール
 async function runAcceptReject() {
   const rejectReason = document.getElementById('accept-reject-reason').value.trim();
   if (!rejectReason) {
@@ -2966,14 +3037,14 @@ async function runAcceptReject() {
         await apiDeleteLegendColor(res.machine, res.start, res.end);
       }
     }
-    // ④ PMOへ辞退メール送信（改修(メール文面): 提案資料④に合わせて件名・本文を更新）
+    // ④ 事務局へ辞退メール送信（改修(メール文面): 提案資料④に合わせて件名・本文を更新）
     const rejMachine = state.actionHilsRes?.machine || '';
     // 改修(複数行予約対応): 件名の「他N件」は同一申請に紐づく予約行数-1（先頭以外の件数）
     const rejSiblingCount = rejList.length > 1 ? rejList.length - 1 : 0;
     await sendMail(
       mailConfig.pmoTo,
       buildMailSubject('使用辞退の通知', rejMachine, resolveMailAddress(rejMachine), rejSiblingCount),
-      `PMO ご担当者 様\n\n` +
+      `事務局 ご担当者 様\n\n` +
       `下記予約について、申請者より使用を「辞退」する旨の回答がありました。\n` +
       `本予約は予約管理表から削除されます。\n\n` +
       `■対象予約\n` +
@@ -2985,7 +3056,7 @@ async function runAcceptReject() {
       mailSignature(),
       mailConfig.pmoCc
     );
-    setStatus('辞退しました。PMOへ通知を送信しました。');
+    setStatus('辞退しました。事務局へ通知を送信しました。');
   } catch (e) {
     console.error('辞退処理エラー:', e);
     setStatus('辞退処理に失敗しました', 'red');
@@ -3294,17 +3365,19 @@ function showDialog(title, data, mode, resId = null) {
   delBtn.classList.toggle('hidden', !(isAdmin && mode === 'edit'));
   terminateBtn.classList.toggle('hidden', !(isAdmin && mode === 'edit'));
 
-  // 改修(?idなし事務局ページ対応): ?id=無しで開いた事務局ページでの新規登録は、
-  // 起動時点で紐づく案件（state.actionItemId）が存在しないため、登録前に
-  // 事務局アクションリストから対象案件を選ばせるケースピッカーを表示する
-  const isRegPicker = (mode === 'register' && !state.actionItemId);
+  // 改修(案件ピッカー常時表示対応): 登録モードでは常にケースピッカーを表示する。
+  // 従来は?id=無し起動時（state.actionItemId未設定時）のみ表示していたが、
+  // ①案件選択後に再度登録ダイアログを開くとピッカーが消える、②?id=あり起動時は
+  // ピッカー自体が出せず案件変更ができない、という2つの不具合があったため無条件化した。
+  // 登録は事務局専用（openRegisterDialogが非事務局で早期return）のため実質事務局のみに影響する
+  const isRegPicker = (mode === 'register');
   _regPickerActive = isRegPicker;
 
   bodyEl.innerHTML = `
     ${isRegPicker ? `
     <div id="form-row-case" class="form-row">
       <label>対象案件:</label>
-      <select id="f-case"><option value="">読み込み中...</option></select>
+      <select id="f-case" autocomplete="off"><option value="">読み込み中...</option></select>
     </div>` : ''}
     <div class="form-row">
       <label>ルーム:</label>
@@ -3401,6 +3474,38 @@ function showDialog(title, data, mode, resId = null) {
   // 改修(?idなし事務局ページ対応): ケースピッカー（対象案件セレクト）の読み込みと選択処理
   if (isRegPicker) {
     const caseSelect = document.getElementById('f-case');
+    // 改修(案件ピッカー常時表示対応): 選択案件の反映処理を関数化し、手動change時と
+    // ホーム案件（URL起動案件）の初期選択時の両方から共通で呼べるようにした
+    function applyPickedCase(picked) {
+      if (!picked) {
+        // 改修: 選択解除時は案件コンテキストを未設定に戻す
+        state.actionItemId  = null;
+        state.actionTitleId = '';
+        state.actionStatus  = '';
+        state.autoFill      = null;
+        return;
+      }
+      // 改修: 選択案件を以後の登録サブミット経路（既存の?id=起動時と同じ経路）へ引き渡す
+      state.actionItemId  = picked.id;
+      state.actionTitleId = String(picked.id);
+      state.actionStatus  = picked.status || '';
+      state.autoFill = {
+        label:     picked.usage     || '',
+        applicant: picked.applicant || '',
+        email:     picked.email     || '',
+        category:  picked.category  || '',
+        // 改修(使用履歴リスト転記列追加): UI表示はせず、登録時に使用履歴リストへ裏で転記するための項目
+        machineType: picked.machineType || '',  // 使用機種（呼称）
+        department:  picked.department  || '',  // 使用者所属室課
+        phone:       picked.phone       || '',  // 使用者電話番号
+        autoRun:     picked.autoRun     || '',  // 昼夜自動運転有無
+      };
+      // 改修: 申請者・ラベル欄へ選択案件の内容を反映（?id=起動時の自動記入と同等の処理）
+      const fApplicant = document.getElementById('f-applicant');
+      if (fApplicant) fApplicant.value = state.autoFill.applicant;
+      const fLabel = document.getElementById('f-label');
+      if (fLabel) fLabel.value = state.autoFill.label;
+    }
     (async () => {
       let cases = [];
       try {
@@ -3408,7 +3513,14 @@ function showDialog(title, data, mode, resId = null) {
       } catch (e) {
         console.error('action-items 取得エラー:', e);
       }
-      if (!Array.isArray(cases) || cases.length === 0) {
+      if (!Array.isArray(cases)) cases = [];
+      // 改修(案件ピッカー常時表示対応): ホーム案件（URL(?id=)起動案件）は、ステータスが
+      // 0/91以外（登録済み等）だと一覧取得(/api/action-items)に含まれないため、
+      // 一覧に無ければ先頭へ補完し、初期選択できるようにする
+      if (state.homeCase && !cases.some(c => String(c.id) === String(state.homeCase.id))) {
+        cases = [state.homeCase, ...cases];
+      }
+      if (cases.length === 0) {
         caseSelect.innerHTML = '<option value="">対象案件がありません</option>';
         return;
       }
@@ -3416,39 +3528,20 @@ function showDialog(title, data, mode, resId = null) {
         '<option value="">選択してください</option>' +
         cases.map(c => {
           const labelText = `#${c.id} ${c.applicant || '(申請者不明)'} / ${c.usage || c.machineType || ''} [${c.status || ''}]`;
-          return `<option value="${c.id}">${labelText}</option>`;
+          const isHome    = state.homeCase && String(c.id) === String(state.homeCase.id);
+          return `<option value="${c.id}"${isHome ? ' selected' : ''}>${labelText}</option>`;
         }).join('');
+      // 改修: ホーム案件の有無に応じてvalueを明示的に設定する。
+      // 注意: ダイアログ再表示時にブラウザ側のフォーム値復元により見た目上前回値が残る場合があるが
+      // （f-status等、本改修と無関係の既存フィールドでも同様に発生する既存動作）、
+      // state.actionItemId自体は本行とapplyPickedCase()の呼び出しにより正しくリセットされる
+      caseSelect.value = state.homeCase ? String(state.homeCase.id) : '';
       caseSelect.addEventListener('change', () => {
-        const picked = cases.find(c => String(c.id) === caseSelect.value);
-        if (!picked) {
-          // 改修: 選択解除時は案件コンテキストを未設定に戻す
-          state.actionItemId  = null;
-          state.actionTitleId = '';
-          state.actionStatus  = '';
-          state.autoFill      = null;
-          return;
-        }
-        // 改修: 選択案件を以後の登録サブミット経路（既存の?id=起動時と同じ経路）へ引き渡す
-        state.actionItemId  = picked.id;
-        state.actionTitleId = String(picked.id);
-        state.actionStatus  = picked.status || '';
-        state.autoFill = {
-          label:     picked.usage     || '',
-          applicant: picked.applicant || '',
-          email:     picked.email     || '',
-          category:  picked.category  || '',
-          // 改修(使用履歴リスト転記列追加): UI表示はせず、登録時に使用履歴リストへ裏で転記するための項目
-          machineType: picked.machineType || '',  // 使用機種（呼称）
-          department:  picked.department  || '',  // 使用者所属室課
-          phone:       picked.phone       || '',  // 使用者電話番号
-          autoRun:     picked.autoRun     || '',  // 昼夜自動運転有無
-        };
-        // 改修: 申請者・ラベル欄へ選択案件の内容を反映（?id=起動時の自動記入と同等の処理）
-        const fApplicant = document.getElementById('f-applicant');
-        if (fApplicant) fApplicant.value = state.autoFill.applicant;
-        const fLabel = document.getElementById('f-label');
-        if (fLabel) fLabel.value = state.autoFill.label;
+        applyPickedCase(cases.find(c => String(c.id) === caseSelect.value));
       });
+      // 改修(案件ピッカー常時表示対応): ホーム案件があれば初期状態として選択反映する
+      // （URL起動時と同等の自動記入状態にする。ホーム案件が無ければ未選択のまま）
+      applyPickedCase(state.homeCase ? cases.find(c => String(c.id) === String(state.homeCase.id)) : null);
     })();
   }
 
@@ -3505,7 +3598,9 @@ function showDialog(title, data, mode, resId = null) {
       okBtn.disabled = true;
       return;
     }
-    const biz = bizDaysBetween(ds, de);
+    // 改修(予約不可設定の営業日反映): フォームで選択中の筐体の予約不可期間も除外して数える
+    const curMachine = document.getElementById('f-machine')?.value;
+    const biz = bizDaysBetween(ds, de, curMachine);
     bEl.textContent = `営業日数:  ${biz} 日`;
     // 改修(第7回): 上限警告撤廃
     wEl.classList.add('hidden');
@@ -3513,6 +3608,8 @@ function showDialog(title, data, mode, resId = null) {
   }
   document.getElementById('f-start').addEventListener('change', updateBiz);
   document.getElementById('f-end').addEventListener('change', updateBiz);
+  // 改修(予約不可設定の営業日反映): 筐体を変更した場合も営業日数を再計算する（hidden inputの場合は変更されないため無害）
+  document.getElementById('f-machine')?.addEventListener('change', updateBiz);
   updateBiz();
 
   function updateStatusFields() {
@@ -4166,6 +4263,20 @@ async function init() {
         department:  actionItem.department  || '',  // 使用者所属室課
         phone:       actionItem.phone       || '',  // 使用者電話番号
         autoRun:     actionItem.autoRun     || '',  // 昼夜自動運転有無
+      };
+      // 改修(案件ピッカー常時表示対応): URL起動案件を「ホーム案件」として保持する。
+      // /api/action-items の要素と同形にし、ケースピッカーの初期選択にそのまま使えるようにする
+      state.homeCase = {
+        id:          actionItem.id,
+        applicant:   actionItem.applicant   || '',
+        usage:       actionItem.usage       || '',
+        machineType: actionItem.machineType || '',
+        email:       actionItem.email       || '',
+        category:    actionItem.category    || '',
+        department:  actionItem.department  || '',
+        phone:       actionItem.phone       || '',
+        autoRun:     actionItem.autoRun     || '',
+        status:      actionItem.status      || '',
       };
       setStatus('');
     } catch (e) {

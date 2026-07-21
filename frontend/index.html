@@ -24,7 +24,7 @@
         <button id="register-btn" class="btn btn-register">＋ 登録</button>
         <!-- 改修(休日設定廃止→予約不可設定): 選択範囲（筐体×日付）を予約不可にするボタン（事務局のみ表示・非事務局はJSで隠す） -->
         <!-- 改修(色調整): 登録ボタン(緑)と同色で見分けづらかったため専用色(インディゴ)を継続使用 -->
-        <button id="blockade-btn" class="btn btn-blockade">予約不可</button>
+        <button id="blockade-btn" class="btn btn-blockade">予約不可設定</button>
         <!-- 改修: スクショ機能（📷保存ボタン）は削除 -->
         <!-- 改修(第4回): 西/南HILSルーム切替プルダウン -->
         <!-- 改修: 設置場所（61号棟3F）をルーム名に併記 -->
@@ -191,7 +191,7 @@
 
           <!-- 期間変更時の入力欄 -->
           <div id="accept-action-change" class="accept-action-body hidden">
-            <p class="accept-note">変更が必要な場合は以下を入力してPMOへ変更依頼を送信してください。</p>
+            <p class="accept-note">変更が必要な場合は以下を入力して事務局へ変更依頼を送信してください。</p>
             <div class="form-row">
               <label>使用開始日:</label>
               <input type="date" id="accept-new-start">

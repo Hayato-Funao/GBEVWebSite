@@ -410,6 +410,9 @@ body {
 /* 選択時、ラベルを含む先頭セルを他の選択セル(z-index:1)より前面にして全文表示 */
 /* 改修: z-index:2 に下げて固定列(z-index:3)より背面にし、固定列に覆いかぶさらないよう修正 */
 .gantt-table td.gantt-cell.res-selected.res-edge-left { z-index: 2; }
+/* 改修(不具合修正): コメントを持つセルも同様に、隣接する選択セル(z-index:1)より前面にする。
+   ラベルと同じ考え方で固定列(z-index:3)より背面のまま（固定列と重なった場合は隠れる） */
+.gantt-table td.gantt-cell.has-comment { z-index: 2; }
 .gantt-table td.gantt-cell.today-cell {
   border-left: 2px solid #2563eb;
 }
@@ -482,14 +485,19 @@ body {
 .cell-comment {
   position: absolute;
   left: 3px;
-  bottom: 1px;
-  right: 3px;
+  /* 改修(不具合修正): セル下部固定だったため、セル縦中央に表示されるよう変更 */
+  top: 50%;
+  transform: translateY(-50%);
+  /* 改修(不具合修正): セル幅で省略(ellipsis)せず、.res-labelと同様に隣接セルへはみ出して全文表示する
+     （テキスト同士の重なりは許容。親td.gantt-cellのoverflow:visibleが必要） */
+  width: 9999px;
   font-size: 11px;
   color: #475569;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   pointer-events: none;
+  /* 改修(不具合修正): .res-labelと同じz-index:1にする。はみ出し先の隣接セルより前面に出す制御は
+     このスパン自身ではなく、セル(td)側の.has-comment（z-index:2）で行う（ラベルのres-edge-left同様）。
+     固定列(z-index:3)より低いままにすることで、固定列と重なった場合は.res-label同様に隠れる */
   z-index: 1;
 }
 
@@ -1220,6 +1228,12 @@ body {
 /* 辞退ブロックはボーダーを赤系に */
 .accept-card-reject {
   border-color: #fca5a5;
+}
+/* 改修: 承知/辞退ページのラベルが.form-row labelの84px固定幅に収まらず途中改行される問題を解消。
+   最長ラベル「辞退理由（必須）:」に合わせて幅を確保し、折り返しを禁止して1行表示にする */
+.accept-card .form-row label {
+  width: 150px;
+  white-space: nowrap;
 }
 /* 改修(表拡大): font12→18, margin-bottom10→15 */
 .accept-card-title {
