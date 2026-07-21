@@ -924,6 +924,11 @@ function buildSpPayload(resData, isCreate) {
     actionListId: isCreate
       ? ((state.actionTitleId && /^\d+$/.test(state.actionTitleId)) ? Number(state.actionTitleId) : undefined)
       : resData.actionListId,
+    // 改修(使用履歴リスト転記列追加): 案件情報からの転記4項目をSPペイロードへ引き渡す
+    machineType: resData.machineType || '',  // 使用機種（呼称）
+    department:  resData.department  || '',  // 使用者所属室課
+    phone:       resData.phone       || '',  // 使用者電話番号
+    autoRun:     resData.autoRun     || '',  // 昼夜自動運転有無
   };
 }
 
@@ -3432,6 +3437,11 @@ function showDialog(title, data, mode, resId = null) {
           applicant: picked.applicant || '',
           email:     picked.email     || '',
           category:  picked.category  || '',
+          // 改修(使用履歴リスト転記列追加): UI表示はせず、登録時に使用履歴リストへ裏で転記するための項目
+          machineType: picked.machineType || '',  // 使用機種（呼称）
+          department:  picked.department  || '',  // 使用者所属室課
+          phone:       picked.phone       || '',  // 使用者電話番号
+          autoRun:     picked.autoRun     || '',  // 昼夜自動運転有無
         };
         // 改修: 申請者・ラベル欄へ選択案件の内容を反映（?id=起動時の自動記入と同等の処理）
         const fApplicant = document.getElementById('f-applicant');
@@ -3615,6 +3625,11 @@ function showDialog(title, data, mode, resId = null) {
       remark:    document.getElementById('f-remark').value.trim(),
       status,
       marks,     // 改修(第8回): 検証完了日★配列
+      // 改修(使用履歴リスト転記列追加): UI入力欄は設けず、案件情報から使用履歴リストへ裏で転記する
+      machineType: state.autoFill ? state.autoFill.machineType : '', // 使用機種（呼称）へ転記
+      department:  state.autoFill ? state.autoFill.department  : '', // 使用者所属室課へ転記
+      phone:       state.autoFill ? state.autoFill.phone       : '', // 使用者電話番号へ転記
+      autoRun:     state.autoFill ? state.autoFill.autoRun     : '', // 昼夜自動運転有無へ転記
     };
     // 改修(?idなし事務局ページ対応): ケースピッカー表示中は対象案件が未選択のまま登録させない
     if (isRegPicker && !state.actionItemId) {
@@ -4146,6 +4161,11 @@ async function init() {
         applicant: actionItem.applicant   || '',  // 申請者名を申請者欄初期値に
         email:     actionItem.email       || '',
         category:  actionItem.category    || '',
+        // 改修(使用履歴リスト転記列追加): UI表示はせず、登録時に使用履歴リストへ裏で転記するための項目
+        machineType: actionItem.machineType || '',  // 使用機種（呼称）
+        department:  actionItem.department  || '',  // 使用者所属室課
+        phone:       actionItem.phone       || '',  // 使用者電話番号
+        autoRun:     actionItem.autoRun     || '',  // 昼夜自動運転有無
       };
       setStatus('');
     } catch (e) {

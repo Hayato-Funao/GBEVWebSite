@@ -1202,6 +1202,11 @@ function normalizeActionItem(item) {
     status:      item['OData__x30b9__x30c6__x30fc__x30bf__x30']                                     || '',
     // 改修: 利用取消依頼の取消理由列。事務局が予約削除時にこの有無でステータス遷移先を判定する
     cancelReason: item['OData__x53d6__x6d88__x7406__x7531_']                                        || '',
+    // 改修(使用履歴リスト転記列追加): 使用履歴リストへ転記するための追加3列。
+    // Forms改修が完了するまでは事務局アクションリスト側に値が入らないため空文字のままとなる
+    department:  item['OData__x7533__x8acb__x8005__x6240__x5c']                                     || '',  // 申請者所属室課
+    phone:       item['OData__x7533__x8acb__x8005__x96fb__x8a']                                     || '',  // 申請者電話番号
+    autoRun:     item['OData__x663c__x591c__x81ea__x52d5__x90']                                     || '',  // 昼夜自動運転有無
   };
 }
 
@@ -1227,6 +1232,13 @@ function toSpFields(data) {
   // 改修: 事務局アクションリストID列（内部名 _x4e8b__x52d9__x5c40__x30a2__x30）へSP内部IDを数値で書き込み。未設定はスキップ
   if (data.actionListId != null) f['OData__x4e8b__x52d9__x5c40__x30a2__x30'] = data.actionListId;
   // color は使用履歴リストに列がないため書き込みスキップ
+  // 改修(使用履歴リスト転記列追加): SharePointリスト列名一覧.xlsxの対応表に基づく4列。
+  // 値は事務局アクションリスト案件からの自動転記のみ（本Webアプリでは入力UIを持たない）。
+  // 空の場合はスキップ（既存email/addressと同方針。編集時の意図しないブランク上書き防止）
+  if (data.machineType) f.field_8                                       = data.machineType;  // 使用機種（呼称）
+  if (data.department)  f['OData__x6240__x5c5e__x5ba4__x8ab2_']         = data.department;    // 使用者所属室課
+  if (data.phone)       f['OData__x7533__x8acb__x8005__x96fb__x8a']     = data.phone;         // 使用者電話番号
+  if (data.autoRun)     f['OData__x663c__x591c__x81ea__x52d5__x90']     = data.autoRun;       // 昼夜自動運転有無
   return f;
 }
 
