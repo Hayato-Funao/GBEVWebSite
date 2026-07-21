@@ -39,7 +39,7 @@
           <span id="status-msg" class="status-msg hidden"></span>
         </div>
         <button id="manual-btn" class="btn btn-manual">マニュアル</button>
-        <a id="map-btn" class="btn btn-manual" href="http://172.25.7.82:5173/map" target="_blank" rel="noopener">地図</a>
+        <!-- 改修(地図ボタンルーム別化): 初期値は西HILSルーム。ルーム切替時はapp.jsのapplyMapUrl()がhrefを書き換える --><a id="map-btn" class="btn btn-manual" href="http://172.25.7.82:5173/map?room=%E8%A5%BFHILS%E3%83%AB%E3%83%BC%E3%83%A0" target="_blank" rel="noopener">地図</a>
         <div class="user-area">
           <span id="user-name"></span>
         </div>

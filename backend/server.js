@@ -1182,6 +1182,12 @@ function normalizeSpItem(item) {
     // 改修(承知/辞退表示不具合): 事務局アクションリストID列を返却し、承知/辞退ページの予約突合キーに使う
     actionListId: item['OData__x4e8b__x52d9__x5c40__x30a2__x30'] != null
         ? item['OData__x4e8b__x52d9__x5c40__x30a2__x30'] : null,
+    // 改修(使用履歴リスト転記列読み戻し追加): toSpFieldsで書き込む4列を読み戻し、
+    // 反映結果をアプリ側でも確認できるようにする（書込のみで検証手段がなかったための補強）
+    machineType: item.field_8                                     || '',  // 使用機種（呼称）
+    department:  item['OData__x6240__x5c5e__x5ba4__x8ab2_']       || '',  // 使用者所属室課
+    phone:       item['OData__x7533__x8acb__x8005__x96fb__x8a']   || '',  // 使用者電話番号
+    autoRun:     item['OData__x663c__x591c__x81ea__x52d5__x90']   || '',  // 昼夜自動運転有無
   };
 }
 
@@ -1243,15 +1249,21 @@ function toSpFields(data) {
 }
 
 // ── ダミーデータ（筐体A〜T 表記）──
+// 改修(マニュアル用スクショ品質改善): 日付を「今日」付近～将来へ移し、
+// 凡例(leg1～leg8)を広く使うことで、ダミーモードのガント表を撮影した際に
+// 予約バーが1件も見えない・色が単調になる問題を解消した
 const DUMMY_RESERVATIONS = [
-  { id: 1, machine: '筐体C', start: '2026-06-01', end: '2026-06-05', label: '3YW 国内開発', legendId: 'leg4', color: '#00B050', user: '' },
-  { id: 2, machine: '筐体C', start: '2026-06-09', end: '2026-06-09', label: 'A-XPX',        legendId: 'leg1', color: '#8DB4E2', user: '' },
-  { id: 3, machine: '筐体H', start: '2026-06-01', end: '2026-07-04', label: '202605_006',   legendId: 'leg3', color: '#92D050', user: '' },
-  { id: 4, machine: '筐体S', start: '2026-06-14', end: '2026-06-18', label: 'BATTテスト',   legendId: 'leg4', color: '#00B050', user: '' },
-  { id: 5, machine: '筐体A', start: '2026-06-10', end: '2026-06-15', label: 'Gen4開発',     legendId: 'leg3', color: '#92D050', user: '' },
-  { id: 6, machine: '筐体E', start: '2026-06-07', end: '2026-06-12', label: 'EDR-XPX',      legendId: 'leg1', color: '#8DB4E2', user: '' },
-  { id: 7, machine: '筐体L', start: '2026-05-20', end: '2026-07-10', label: '長期貸出',     legendId: 'leg5', color: '#FFC000', user: '' },
-  { id: 8, machine: '筐体P', start: '2026-06-20', end: '2026-06-25', label: 'XPX-FI',       legendId: 'leg2', color: '#E63283', user: '' },
+  { id: 1, machine: '筐体C', start: '2026-07-13', end: '2026-07-17', label: '3YW 国内開発', legendId: 'leg4', color: '#00B050', user: '' },
+  { id: 2, machine: '筐体C', start: '2026-07-22', end: '2026-07-22', label: 'A-XPX',        legendId: 'leg1', color: '#8DB4E2', user: '' },
+  { id: 3, machine: '筐体H', start: '2026-07-15', end: '2026-08-14', label: '202605_006',   legendId: 'leg3', color: '#92D050', user: '' },
+  { id: 4, machine: '筐体S', start: '2026-07-27', end: '2026-07-31', label: 'BATTテスト',   legendId: 'leg6', color: '#00B0F0', user: '' },
+  { id: 5, machine: '筐体A', start: '2026-07-23', end: '2026-07-28', label: 'Gen4開発',     legendId: 'leg3', color: '#92D050', user: '' },
+  { id: 6, machine: '筐体E', start: '2026-07-20', end: '2026-07-25', label: 'EDR-XPX',      legendId: 'leg1', color: '#8DB4E2', user: '' },
+  { id: 7, machine: '筐体L', start: '2026-07-01', end: '2026-08-20', label: '長期貸出',     legendId: 'leg5', color: '#FFC000', user: '' },
+  { id: 8, machine: '筐体P', start: '2026-07-29', end: '2026-08-03', label: 'XPX-FI',       legendId: 'leg2', color: '#E63283', user: '' },
+  { id: 9, machine: '筐体D', start: '2026-07-16', end: '2026-07-21', label: '不合格バッファ', legendId: 'leg6', color: '#00B0F0', user: '' },
+  { id: 10, machine: '筐体G', start: '2026-07-24', end: '2026-08-05', label: 'AP2PI/FHEV再現', legendId: 'leg7', color: '#D457BF', user: '' },
+  { id: 11, machine: '筐体K', start: '2026-07-14', end: '2026-07-16', label: '日程仮置き',  legendId: 'leg8', color: '#FFFF00', user: '' },
 ];
 
 // 改修: 起動時のメール宛先/CCコンソール入力を待ってからHTTP待受を開始する
