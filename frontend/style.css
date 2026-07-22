@@ -660,6 +660,13 @@ body {
   color: #1e293b;
   flex-shrink: 0;
 }
+/* 改修: 使用期間変更申請ダイアログのラベル「変更後開始日:」「変更後終了日:」が
+   .form-row label の84px固定幅に収まらず途中改行される問題を解消。
+   幅を拡大し折り返しを禁止して1行表示にする（承知/辞退ページの先例と同方針） */
+#extend-pane .form-row label {
+  width: 110px;
+  white-space: nowrap;
+}
 /* 改修(表拡大): height32→48, font11→16 */
 .form-row input,
 .form-row select,

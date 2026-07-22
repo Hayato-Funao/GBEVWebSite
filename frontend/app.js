@@ -2751,7 +2751,7 @@ document.getElementById('ext-ok').addEventListener('click', async () => {
     await sendMail(
       mailConfig.pmoTo,
       buildMailSubject('期間変更申請の通知', extMachine, resolveMailAddress(extMachine), _group.count),
-      `事務局 ご担当者 様\n\n` +
+      `統合HILS貸出予約サイト事務局 ご担当者 様\n\n` +
       `下記予約について、申請者より期間変更の申請がありました。\n\n` +
       `■対象予約\n` +
       ` 予約ID  : ${extTitleId}\n` +
@@ -2824,7 +2824,7 @@ document.getElementById('cancel-ok').addEventListener('click', async () => {
     await sendMail(
       mailConfig.pmoTo,
       buildMailSubject('利用取消依頼の通知', cancelMachine, resolveMailAddress(cancelMachine), _group.count),
-      `事務局 ご担当者 様\n\n` +
+      `統合HILS貸出予約サイト事務局 ご担当者 様\n\n` +
       `下記予約について、申請者より利用取消の依頼がありました。\n\n` +
       `■対象予約\n` +
       ` 予約ID  : ${cancelTitleId}\n` +
@@ -2865,7 +2865,7 @@ document.getElementById('info-report-btn').addEventListener('click', async () =>
     await sendMail(
       mailConfig.pmoTo,
       buildMailSubject('利用終了報告', reportRes?.machine || '', resolveMailAddress(reportRes?.machine), _group.count),
-      `事務局 ご担当者 様\n\n` +
+      `統合HILS貸出予約サイト事務局 ご担当者 様\n\n` +
       `下記予約について、使用者より利用終了の報告がありました。\n` +
       `HILSの初期状態復帰の確認をお願いします。\n\n` +
       `■対象予約\n` +
@@ -2958,7 +2958,7 @@ async function runAcceptChange() {
       mailConfig.pmoTo,
       // 改修: 件名を「予約内容変更」から「日程変更」に変更（実質は使用期間の変更依頼のため）
       buildMailSubject('日程変更のご依頼', chgMachine, resolveMailAddress(chgMachine), chgSiblingCount),
-      `事務局 ご担当者 様\n\n` +
+      `統合HILS貸出予約サイト事務局 ご担当者 様\n\n` +
       `下記予約について、申請者より使用期間の変更依頼がありました。\n\n` +
       `■対象予約\n` +
       ` 予約ID  : ${state.actionTitleId}\n` +
@@ -2998,7 +2998,7 @@ async function runAcceptOk() {
     await sendMail(
       mailConfig.pmoTo,
       buildMailSubject('使用承知の通知', okMachine, resolveMailAddress(okMachine), okSiblingCount),
-      `事務局 ご担当者 様\n\n` +
+      `統合HILS貸出予約サイト事務局 ご担当者 様\n\n` +
       `下記予約について、申請者より使用を「承知」する旨の回答がありました。\n\n` +
       `■対象予約\n` +
       ` 予約ID : ${state.actionTitleId}\n` +
@@ -3055,7 +3055,7 @@ async function runAcceptReject() {
     await sendMail(
       mailConfig.pmoTo,
       buildMailSubject('使用辞退の通知', rejMachine, resolveMailAddress(rejMachine), rejSiblingCount),
-      `事務局 ご担当者 様\n\n` +
+      `統合HILS貸出予約サイト事務局 ご担当者 様\n\n` +
       `下記予約について、申請者より使用を「辞退」する旨の回答がありました。\n` +
       `本予約は予約管理表から削除されます。\n\n` +
       `■対象予約\n` +
