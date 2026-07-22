@@ -27,7 +27,8 @@ body {
   border: 1px solid #e5e7eb;
   border-radius: 4px;
   padding: 2px 12px;
-  font: 600 11px 'Meiryo UI', sans-serif;
+  /* 改修: ステータス文が小さく読みにくいため11px→16pxに拡大 */
+  font: 600 16px 'Meiryo UI', sans-serif;
 }
 
 .user-area {
