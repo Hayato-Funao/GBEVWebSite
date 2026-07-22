@@ -4298,6 +4298,10 @@ async function init() {
     // 改修(?idなし事務局ページ対応): SharePoint左ナビから?id=無しで開く事務局用ページのため、
     // 統合HILS使用履歴リスト（南HILSルーム）の予約を最初から表示する（従来の既定は西HILSルーム）
     state.currentRoom = 'south';
+  } else {
+    // 改修(?idなしユーザーページ対応): ?id=も?user=adminも無いユーザー用サイトの初期表示も
+    // 南HILSルームとする（従来の既定は西HILSルーム）
+    state.currentRoom = 'south';
   }
 
   // 改修(筐体マスタ共通化): 筐体マスタCSV（west/south）をサーバーから取得する
