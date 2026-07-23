@@ -3317,6 +3317,7 @@ function openEditDialog(resId) {
     status:    res.status    || 'normal',
     room:      res.room      || 'west',
     marks:     res.marks     || [],     // 改修(第8回): 検証完了日★を復元
+    machineType: res.machineType || '',  // 改修(機種呼称全凡例対応): 機種呼称パーツの初期値
   }, 'edit', resId);
 }
 
@@ -3338,6 +3339,7 @@ function openViewDialog(resId) {
     status:    res.status    || 'normal',
     room:      res.room      || 'west',
     marks:     res.marks     || [],
+    machineType: res.machineType || '',  // 改修(機種呼称全凡例対応): 機種呼称パーツの初期値
   }, 'view', resId);
 }
 
@@ -3355,12 +3357,22 @@ const LABEL_FIELD_SETS = [
   ]},
   // 改修(第16回): 一般募集ラベルに接頭辞 ')' を追加 U-1c
   // 改修: 一般募集ラベルの接頭辞 ')' を削除（凡例カテゴリの接頭辞削除依頼による）
+  // 改修(機種呼称全凡例対応): 機種呼称パーツ(name)を予約管理No/機種コードの間に追加
   { match: n => n.includes('一般募集'), prefix: '', parts: [
-    { key: 'no',   label: '予約管理No', placeholder: '例）001',       required: true },
-    { key: 'code', label: '機種コード', placeholder: '例）ABCコード', required: true },
+    { key: 'no',   label: '予約管理No', placeholder: '例）001',       required: true  },
+    { key: 'name', label: '機種呼称',   placeholder: '例）ABCモデル',  required: false },
+    { key: 'code', label: '機種コード', placeholder: '例）ABCコード', required: true  },
   ]},
 ];
-function getLabelFieldSet(name) { return LABEL_FIELD_SETS.find(s => s.match(name)) || null; }
+// 改修(機種呼称全凡例対応): 上記に該当しない凡例（マル特・TM、事務局メンテ等）に適用する既定の分割入力欄。
+// 従来は単一の自由入力ラベルだったが、機種呼称パーツ＋自由入力パーツの2パーツへ変更し、
+// 機種呼称を事務局アクションリストの「呼称」列から他項目（申請者等）と同様に自動入力できるようにする
+const DEFAULT_LABEL_FIELD_SET = { prefix: '', parts: [
+  { key: 'name', label: '機種呼称', placeholder: '例）ABCモデル', required: false },
+  { key: 'free', label: 'ラベル',   placeholder: 'プロジェクト名など', required: false },
+]};
+// 改修(機種呼称全凡例対応): 未定義の凡例はnullではなくDEFAULT_LABEL_FIELD_SETを返す（常に非null）
+function getLabelFieldSet(name) { return LABEL_FIELD_SETS.find(s => s.match(name)) || DEFAULT_LABEL_FIELD_SET; }
 function composeLabel(fieldSet, values) {
   const joined = fieldSet.parts.map(p => (values[p.key] || '').trim()).filter(v => v !== '').join('_');
   return joined === '' ? '' : (fieldSet.prefix || '') + joined;
@@ -3617,6 +3629,12 @@ function showDialog(title, data, mode, resId = null) {
       if (fApplicant) fApplicant.value = state.autoFill.applicant;
       const fLabel = document.getElementById('f-label');
       if (fLabel) fLabel.value = state.autoFill.label;
+      // 改修(機種呼称全凡例対応): 機種呼称パーツにも選択案件の呼称を反映し、ラベルへ再合成する
+      const fNameInput = document.querySelector('#f-label-fields .f-label-part[data-key="name"]');
+      if (fNameInput) {
+        fNameInput.value = state.autoFill.machineType || '';
+        fNameInput.dispatchEvent(new Event('input'));
+      }
     }
     (async () => {
       let cases = [];
@@ -3669,15 +3687,10 @@ function showDialog(title, data, mode, resId = null) {
   function updateLabelFields() {
     const leg  = _legend.find(l => l.id === document.getElementById('f-legend').value);
     const name = leg ? leg.name : '';
+    // 改修(機種呼称全凡例対応): getLabelFieldSetは常に非nullを返すため、以降フィールドセット無しの分岐は無い
     const fieldSet   = getLabelFieldSet(name);
     const container  = document.getElementById('f-label-fields');
     const labelInput = document.getElementById('f-label');
-    if (!fieldSet) {
-      container.innerHTML = '';
-      labelInput.readOnly = false;
-      labelInput.placeholder = 'プロジェクト名など';
-      return;
-    }
     container.innerHTML = fieldSet.parts.map(p =>
       `<div class="form-row"><label>${p.label}:</label>` +
       `<input type="text" class="f-label-part" data-key="${p.key}" placeholder="${p.placeholder}"></div>`
@@ -3691,6 +3704,16 @@ function showDialog(title, data, mode, resId = null) {
       if (composed !== '') labelInput.value = composed;
     };
     container.querySelectorAll('.f-label-part').forEach(inp => inp.addEventListener('input', recompose));
+
+    // 改修(機種呼称全凡例対応): 機種呼称パーツ(key:'name')は事務局アクションリストの「呼称」列から
+    // 他の自動入力項目（申請者等）と同様に自動入力する。編集時は既存値(data.machineType)を表示するのみとし、
+    // 他パーツが未復元のまま再合成してラベルを壊さないよう recompose は呼ばない。
+    // 新規登録時は空のラベルに即時反映するため recompose する。
+    const nameInput = container.querySelector('.f-label-part[data-key="name"]');
+    if (nameInput) {
+      nameInput.value = data.machineType || (state.autoFill ? state.autoFill.machineType : '') || '';
+      if (mode === 'register') recompose();
+    }
   }
   document.getElementById('f-legend').addEventListener('change', updateLabelFields);
   updateLabelFields();
@@ -3760,6 +3783,12 @@ function showDialog(title, data, mode, resId = null) {
     // ラベル（案件名）入力欄はフォーム種別依存のため、フィールドが存在する場合のみセット
     const fLabel = document.getElementById('f-label');
     if (fLabel) fLabel.value = state.autoFill.label;
+    // 改修(機種呼称全凡例対応): 機種呼称パーツにも呼称を反映し、ラベルへ再合成する
+    const fNameInput = document.querySelector('#f-label-fields .f-label-part[data-key="name"]');
+    if (fNameInput) {
+      fNameInput.value = state.autoFill.machineType || '';
+      fNameInput.dispatchEvent(new Event('input'));
+    }
   }
 
   // 改修(第8回): チェックボックスON/OFFで完了日入力欄を有効/無効切替
@@ -3834,8 +3863,10 @@ function showDialog(title, data, mode, resId = null) {
       remark:    document.getElementById('f-remark').value.trim(),
       status,
       marks,     // 改修(第8回): 検証完了日★配列
-      // 改修(使用履歴リスト転記列追加): UI入力欄は設けず、案件情報から使用履歴リストへ裏で転記する
-      machineType: state.autoFill ? state.autoFill.machineType : '', // 使用機種（呼称）へ転記
+      // 改修(機種呼称全凡例対応): 機種呼称は分割入力欄(f-label-part[data-key=name])から取得する。
+      // 自動入力後もf-applicant等と同様に手動編集できる可視項目としたため、
+      // 裏転記専用だったstate.autoFillからの直接コピーは廃止した
+      machineType: (document.querySelector('#f-label-fields .f-label-part[data-key="name"]') || { value: '' }).value.trim(),
       department:  state.autoFill ? state.autoFill.department  : '', // 使用者所属室課へ転記
       phone:       state.autoFill ? state.autoFill.phone       : '', // 使用者電話番号へ転記
       autoRun:     state.autoFill ? state.autoFill.autoRun     : '', // 昼夜自動運転有無へ転記
@@ -4465,6 +4496,9 @@ async function init() {
         status:    csv.status   || ex.status   || 'normal',
         remark:    csv.remark   || ex.remark   || '',
         marks:     (csv.marks && csv.marks.length > 0) ? csv.marks : (ex.marks || []),
+        // 改修(機種呼称全凡例対応): 機種呼称はSP予約リスト(field_8)が正、無ければlocalStorageから復元。
+        // 従来はここでコピーされておらず、編集ダイアログを開いても既存値を復元できなかった
+        machineType: res.machineType || ex.machineType || '',
         // 改修(起動連携): 使用履歴リストの予約は南ルームに固定（西ルームではない）
         room:      'south',
         // 改修(案件跨ぎ誤操作防止・不具合修正): APIレスポンスには含まれていたが、
