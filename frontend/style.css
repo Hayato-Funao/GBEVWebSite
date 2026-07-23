@@ -1393,3 +1393,64 @@ span.legend-name-input {
   width: 110px;
   white-space: nowrap;
 }
+/* 改修: 宛先/CCを複数行入力できるリストUI（＋追加で行を増やせる）
+   .mail-cfg-rowは行数が可変のため、ラベルを上端に揃える（.form-rowのalign-items:centerを上書き） */
+.mail-config-box .mail-cfg-row {
+  align-items: flex-start;
+}
+.mail-cfg-field {
+  flex: 1;
+  min-width: 0;
+}
+.mail-cfg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mail-cfg-row-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mail-cfg-row-item .mail-cfg-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.mail-cfg-remove {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: #fee2e2;
+  color: #b91c1c;
+  cursor: pointer;
+  line-height: 1;
+}
+.mail-cfg-remove:hover {
+  background: #fecaca;
+}
+.mail-cfg-add {
+  margin-top: 6px;
+  border: 1px dashed #94a3b8;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  height: 26px;
+  padding: 0 10px;
+  cursor: pointer;
+}
+.mail-cfg-add:hover {
+  background: #eef2f7;
+}
+.mail-cfg-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #94a3b8;
+}

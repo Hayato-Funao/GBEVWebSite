@@ -149,8 +149,11 @@ def main():
 
 		# 改修(メール文面): 共通署名ブロック（JS側 mailSignature() と同内容）
 		# 改修: お問い合わせ先はコンソール設定の事務局宛先(pmoTo)先頭アドレスへ統一
+		# 改修(不具合修正): 本文最終行との間が改行1つだけだと、Outlookの「プレーンテキストメッセージの
+		# 余分な改行を削除する」機能により区切り線の改行が消え、直前の行と連結して表示されてしまう。
+		# 改行を2つ（空行1行）にすることでOutlook側に改行として保持させる。
 		signature = (
-			'\n────────────────────\n'
+			'\n\n────────────────────\n'
 			'統合HILS貸出予約サイト事務局\n'
 			f'お問い合わせ: {pmo_contact}\n'
 			f'HILS貸出予約サイト: {app_url}\n'
@@ -173,9 +176,8 @@ def main():
 			body_lines.append(f' 終了予定日: {end_str}\n')
 			body_lines.append('・期間の延長が必要な場合は、下記ページより期間変更を申請してください。')
 			body_lines.append('・使用を終了される場合は、HILSを初期状態へ復帰のうえ、下記ページより利用終了報告をお願いします。\n')
-			# 改修: ユーザー用サイトURLに予約ID（事務局アクションリストID列）を付与し、開くと該当予約が自動入力されるようにする
-			alert_url = f'{app_url}?id={reservation_id}' if reservation_id else app_url
-			body_lines.append(f' 期間変更・利用終了報告: {alert_url}')
+			# 改修: 予約ID(?id=)未指定でも運用可能なため、URLへの予約ID付与を廃止しトップページへのリンクに統一
+			body_lines.append(f' 期間変更・利用終了報告: {app_url}')
 			mail_body = '\n'.join(body_lines) + signature
 			# 改修: アラートメールCC（コンソール設定）を付与
 			run_sp_command('send_mail', to_address, subject, mail_body, alert_cc)

@@ -596,9 +596,12 @@ function machineWithAddress(machine) {
 
 // 改修(メール文面): 全メール末尾の共通署名ブロック
 // 改修: お問い合わせ先はコンソール設定の事務局宛先(pmoTo)先頭アドレスを使用
+// 改修(不具合修正): 呼び出し元の本文末尾は改行無しで直接連結されるため、署名開始が改行1つだけだと
+// Outlookの「プレーンテキストメッセージの余分な改行を削除する」機能により区切り線の改行が消え、
+// 本文最終行と連結して表示されてしまう。改行を2つ（空行1行）にすることでOutlook側に改行として保持させる。
 function mailSignature() {
 	const contact = (mailConfig.pmoTo || '').split(',')[0].trim();
-	return `\n────────────────────\n` +
+	return `\n\n────────────────────\n` +
 		`統合HILS貸出予約サイト事務局\n` +
 		`お問い合わせ: ${contact}\n` +
 		`HILS貸出予約サイト: ${location.origin}/\n` +
@@ -2899,23 +2902,62 @@ document.getElementById('manual-btn').addEventListener('click', () => {
 // 改修: メール宛先/CC設定モーダル（事務局モードのみ）。
 // 環境変数(HILS_MAIL_PROMPT)やコンソール入力（対話起動）に依存せず、常駐運用中でも
 // backend/mail_config.json を書き換えられるようにする。GET/POST /api/mail-config を使用する。
+// 改修: 宛先/CCは元々カンマ区切りで複数指定可能だったが、単一inputのため1人しか設定できないように
+// 見えていた。行を「＋追加」で増やせるリストUIに変更し、保存時にカンマ区切り文字列へ結合する
+// （mail_config.jsonの保存形式・APIは従来通りのため、backend側の改修は不要）。
+const MAIL_CFG_FIELDS = ['pmoTo', 'pmoCc', 'userCc', 'alertCc'];
+
+// 宛先/CC1件分の入力行（input＋削除ボタン）を生成する
+function buildMailCfgRow(value) {
+  const row = document.createElement('div');
+  row.className = 'mail-cfg-row-item';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'mail-cfg-input';
+  input.placeholder = 'メールアドレス';
+  input.value = value || '';
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'mail-cfg-remove';
+  removeBtn.title = 'この行を削除';
+  removeBtn.textContent = '－';
+  removeBtn.addEventListener('click', () => row.remove());
+  row.appendChild(input);
+  row.appendChild(removeBtn);
+  return row;
+}
+
+// カンマ区切り文字列を行リストへ展開して描画する（値が無い場合は空欄の行を1つ表示）
+function renderMailCfgList(field, csv) {
+  const list = document.getElementById(`mail-cfg-list-${field}`);
+  list.innerHTML = '';
+  const addresses = (csv || '').split(',').map(a => a.trim()).filter(a => a);
+  if (addresses.length === 0) {
+    list.appendChild(buildMailCfgRow(''));
+  } else {
+    addresses.forEach(addr => list.appendChild(buildMailCfgRow(addr)));
+  }
+}
+
+// リスト内の入力値を集め、空要素を除いてカンマ区切り文字列に結合する（既存API形式に合わせる）
+function collectMailCfgValue(field) {
+  const list = document.getElementById(`mail-cfg-list-${field}`);
+  const values = Array.from(list.querySelectorAll('.mail-cfg-input'))
+    .map(input => input.value.trim())
+    .filter(v => v);
+  return values.join(',');
+}
+
 function openMailConfig() {
-  document.getElementById('mail-cfg-pmoTo').value   = mailConfig.pmoTo   || '';
-  document.getElementById('mail-cfg-pmoCc').value   = mailConfig.pmoCc  || '';
-  document.getElementById('mail-cfg-userCc').value  = mailConfig.userCc  || '';
-  document.getElementById('mail-cfg-alertCc').value = mailConfig.alertCc || '';
+  MAIL_CFG_FIELDS.forEach(field => renderMailCfgList(field, mailConfig[field]));
   document.getElementById('mail-config-overlay').classList.remove('hidden');
 }
 function closeMailConfig() {
   document.getElementById('mail-config-overlay').classList.add('hidden');
 }
 async function saveMailConfigFromUi() {
-  const payload = {
-    pmoTo:   document.getElementById('mail-cfg-pmoTo').value.trim(),
-    pmoCc:   document.getElementById('mail-cfg-pmoCc').value.trim(),
-    userCc:  document.getElementById('mail-cfg-userCc').value.trim(),
-    alertCc: document.getElementById('mail-cfg-alertCc').value.trim(),
-  };
+  const payload = {};
+  MAIL_CFG_FIELDS.forEach(field => { payload[field] = collectMailCfgValue(field); });
   showBusy('メール設定を保存中...');
   try {
     const res = await fetch('/api/mail-config', {
@@ -2927,6 +2969,8 @@ async function saveMailConfigFromUi() {
     const saved = await res.json();
     Object.assign(mailConfig, saved); // 画面内のmailConfigも即時更新（署名・宛先解決に反映）
     closeMailConfig();
+    // 改修: 保存完了が分かるよう、他の送信完了時と同様にstatus-msgへ表示する
+    setStatus('メール設定を保存しました');
   } catch (e) {
     console.error('メール宛先/CC設定の保存に失敗しました:', e);
     alert('メール設定の保存に失敗しました。');
@@ -2937,6 +2981,13 @@ async function saveMailConfigFromUi() {
 document.getElementById('mail-config-btn').addEventListener('click', openMailConfig);
 document.getElementById('mail-cfg-cancel').addEventListener('click', closeMailConfig);
 document.getElementById('mail-cfg-save').addEventListener('click', saveMailConfigFromUi);
+// 改修: 各項目の「＋追加」ボタン押下で、その項目のリストへ空欄の入力行を1つ追加する
+document.querySelectorAll('.mail-cfg-add').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const field = btn.dataset.field;
+    document.getElementById(`mail-cfg-list-${field}`).appendChild(buildMailCfgRow(''));
+  });
+});
 
 // 改修(地図ボタンルーム別化): ルームごとに地図の遷移先URLが異なるため、ルーム別に定数を分ける
 const MAP_URL_WEST  = 'http://172.25.7.82:5173/map?room=%E8%A5%BFHILS%E3%83%AB%E3%83%BC%E3%83%A0';

@@ -38,10 +38,11 @@
         <div class="status-area">
           <span id="status-msg" class="status-msg hidden"></span>
         </div>
-        <button id="manual-btn" class="btn btn-manual">マニュアル</button>
         <!-- 改修: メール宛先/CC設定ボタン（事務局モードのみ表示。app.jsのisAdmin判定でhiddenを外す）
-             環境変数(HILS_MAIL_PROMPT)やコンソール入力（対話起動）に依存せず、常駐運用中でも設定変更できるようにする -->
+             環境変数(HILS_MAIL_PROMPT)やコンソール入力（対話起動）に依存せず、常駐運用中でも設定変更できるようにする
+             改修: マニュアルボタンより左側に配置するよう並び順を変更 -->
         <button id="mail-config-btn" class="btn btn-manual hidden">メール設定</button>
+        <button id="manual-btn" class="btn btn-manual">マニュアル</button>
         <!-- 改修(地図ボタンルーム別化): 初期値は西HILSルーム。ルーム切替時はapp.jsのapplyMapUrl()がhrefを書き換える --><a id="map-btn" class="btn btn-manual" href="http://172.25.7.82:5173/map?room=%E8%A5%BFHILS%E3%83%AB%E3%83%BC%E3%83%A0" target="_blank" rel="noopener">地図</a>
         <div class="user-area">
           <span id="user-name"></span>
@@ -234,21 +235,40 @@
 <div id="mail-config-overlay" class="busy-overlay hidden">
   <div class="mail-config-box">
     <h3 class="mail-config-title">メール宛先/CC設定</h3>
-    <div class="form-row">
+    <!-- 改修: 宛先/CCを複数人設定できることが分かるよう、単一inputから「＋追加」で行を増やせるリストUIへ変更
+         保存時（app.js saveMailConfigFromUi）は各行の値をカンマ区切りに結合してmail_config.jsonへ渡すため、
+         backend側（server.js/sp_helper.py/hils_alert.py）は無改修 -->
+    <div class="form-row mail-cfg-row">
       <label>事務局宛先(To):</label>
-      <input type="text" id="mail-cfg-pmoTo" placeholder="複数可・カンマ区切り／空欄で現状維持">
+      <div class="mail-cfg-field">
+        <div class="mail-cfg-list" id="mail-cfg-list-pmoTo"></div>
+        <button type="button" class="mail-cfg-add" data-field="pmoTo">＋ 宛先を追加</button>
+        <p class="mail-cfg-hint">複数人設定可。空欄で現状維持</p>
+      </div>
     </div>
-    <div class="form-row">
+    <div class="form-row mail-cfg-row">
       <label>事務局宛CC:</label>
-      <input type="text" id="mail-cfg-pmoCc" placeholder="複数可・カンマ区切り／空欄でCCなし">
+      <div class="mail-cfg-field">
+        <div class="mail-cfg-list" id="mail-cfg-list-pmoCc"></div>
+        <button type="button" class="mail-cfg-add" data-field="pmoCc">＋ CCを追加</button>
+        <p class="mail-cfg-hint">複数人設定可。空欄でCCなし</p>
+      </div>
     </div>
-    <div class="form-row">
+    <div class="form-row mail-cfg-row">
       <label>ユーザー宛CC:</label>
-      <input type="text" id="mail-cfg-userCc" placeholder="複数可・カンマ区切り／空欄でCCなし">
+      <div class="mail-cfg-field">
+        <div class="mail-cfg-list" id="mail-cfg-list-userCc"></div>
+        <button type="button" class="mail-cfg-add" data-field="userCc">＋ CCを追加</button>
+        <p class="mail-cfg-hint">複数人設定可。空欄でCCなし</p>
+      </div>
     </div>
-    <div class="form-row">
+    <div class="form-row mail-cfg-row">
       <label>アラートCC:</label>
-      <input type="text" id="mail-cfg-alertCc" placeholder="複数可・カンマ区切り／空欄でCCなし">
+      <div class="mail-cfg-field">
+        <div class="mail-cfg-list" id="mail-cfg-list-alertCc"></div>
+        <button type="button" class="mail-cfg-add" data-field="alertCc">＋ CCを追加</button>
+        <p class="mail-cfg-hint">複数人設定可。空欄でCCなし</p>
+      </div>
     </div>
     <div class="dialog-footer-right">
       <button id="mail-cfg-cancel" class="btn btn-cancel">キャンセル</button>
