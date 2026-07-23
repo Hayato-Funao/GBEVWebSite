@@ -60,6 +60,10 @@ def load_mail_config():
 		return dict(_MAIL_CONFIG_DEFAULT)
 
 
+# 改修: 署名の「お問い合わせ」欄は事務局宛先(pmoTo)から独立した固定アドレスとする
+MAIL_CONTACT_ADDRESS = 'JP_HGT_UG_PRJ_MSS_SE_NSD_IDE_XPX@jp.honda'
+
+
 def parse_sp_date(val):
 	"""
 	SharePoint の日付値（/Date(ms)/ 形式または ISO 形式）を date オブジェクトへ変換する。
@@ -85,9 +89,8 @@ def parse_sp_date(val):
 
 
 def main():
-	# 改修: 事務局宛先(To)先頭アドレス(署名の問い合わせ先用)・アラートメールCCをコンソール設定から取得
+	# 改修: アラートメールCCをコンソール設定から取得
 	mail_config = load_mail_config()
-	pmo_contact = (mail_config.get('pmoTo') or '').split(',')[0].strip()
 	alert_cc = mail_config.get('alertCc') or ''
 
 	# 翌日の日付を取得
@@ -148,14 +151,14 @@ def main():
 		app_url = os.environ.get('APP_URL', 'http://RC25020358:3000/')
 
 		# 改修(メール文面): 共通署名ブロック（JS側 mailSignature() と同内容）
-		# 改修: お問い合わせ先はコンソール設定の事務局宛先(pmoTo)先頭アドレスへ統一
+		# 改修: お問い合わせ先は固定アドレス(MAIL_CONTACT_ADDRESS)を使用
 		# 改修(不具合修正): 本文最終行との間が改行1つだけだと、Outlookの「プレーンテキストメッセージの
 		# 余分な改行を削除する」機能により区切り線の改行が消え、直前の行と連結して表示されてしまう。
 		# 改行を2つ（空行1行）にすることでOutlook側に改行として保持させる。
 		signature = (
 			'\n\n────────────────────\n'
 			'統合HILS貸出予約サイト事務局\n'
-			f'お問い合わせ: {pmo_contact}\n'
+			f'お問い合わせ: {MAIL_CONTACT_ADDRESS}\n'
 			f'HILS貸出予約サイト: {app_url}\n'
 			'────────────────────'
 		)

@@ -594,16 +594,17 @@ function machineWithAddress(machine) {
 	return addr ? `${addr} ${machine}` : (machine || '');
 }
 
+// 改修: 署名の「お問い合わせ」欄は事務局宛先(pmoTo)から独立した固定アドレスとする
+const MAIL_CONTACT_ADDRESS = 'JP_HGT_UG_PRJ_MSS_SE_NSD_IDE_XPX@jp.honda';
+
 // 改修(メール文面): 全メール末尾の共通署名ブロック
-// 改修: お問い合わせ先はコンソール設定の事務局宛先(pmoTo)先頭アドレスを使用
 // 改修(不具合修正): 呼び出し元の本文末尾は改行無しで直接連結されるため、署名開始が改行1つだけだと
 // Outlookの「プレーンテキストメッセージの余分な改行を削除する」機能により区切り線の改行が消え、
 // 本文最終行と連結して表示されてしまう。改行を2つ（空行1行）にすることでOutlook側に改行として保持させる。
 function mailSignature() {
-	const contact = (mailConfig.pmoTo || '').split(',')[0].trim();
 	return `\n\n────────────────────\n` +
 		`統合HILS貸出予約サイト事務局\n` +
-		`お問い合わせ: ${contact}\n` +
+		`お問い合わせ: ${MAIL_CONTACT_ADDRESS}\n` +
 		`HILS貸出予約サイト: ${location.origin}/\n` +
 		`────────────────────`;
 }
