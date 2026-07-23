@@ -496,13 +496,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 改修(起動連携): DELETE /api/legend-colors?machine=&start=&end= — 凡例色リストCSVの該当行を削除
+  // 改修(起動連携): DELETE /api/legend-colors?machine=&start=&end=（または spId=） — 凡例色リストCSVの該当行を削除
+  // 改修(spIdキー化): spIdが指定された場合はspIdで削除する（machine/start/endは省略可）
   if (pathname === '/api/legend-colors' && method === 'DELETE') {
     try {
       const machine = urlObj.searchParams.get('machine') || '';
       const start   = urlObj.searchParams.get('start')   || '';
       const end     = urlObj.searchParams.get('end')     || '';
-      deleteLegendCsv(machine, start, end);
+      const spId    = urlObj.searchParams.get('spId')    || '';
+      deleteLegendCsv(machine, start, end, CSV_PATH, spId);
       jsonOk(res, { success: true });
     } catch (e) {
       console.error('DELETE /api/legend-colors:', e.message);
@@ -732,15 +734,18 @@ const server = http.createServer(async (req, res) => {
 
 // ────────────────────────────────────────────
 // 改修(起動連携): 凡例色リストCSV ヘルパー
-// CSVスキーマ（11列）:
+// CSVスキーマ（12列）:
 //   タイトル,StartDate,EndDate,ProjectName,Color,BorrowerName,
-//   ApplicantName,Status,LegendId,Remark,Marks
-// 突合キー: タイトル(machine) + StartDate(start) + EndDate(end)
+//   ApplicantName,Status,LegendId,Remark,Marks,SpId
+// 突合キー: SpId（SharePoint項目ID）があればSpId優先、無い場合のみ
+//           タイトル(machine) + StartDate(start) + EndDate(end)（状態リスト等のSP未連携行用）
+// 改修(spIdキー化): 南ルーム予約は使用履歴リストの実使用日付でmachine|start|endが変動するため、
+// 旧キーのみでは他PCと突合できず色・凡例が共通化されなかった。SpId（安定キー）を追加してこれを解消する。
 // ────────────────────────────────────────────
 
 const CSV_HEADERS = [
   'タイトル', 'StartDate', 'EndDate', 'ProjectName', 'Color', 'BorrowerName',
-  'ApplicantName', 'Status', 'LegendId', 'Remark', 'Marks',
+  'ApplicantName', 'Status', 'LegendId', 'Remark', 'Marks', 'SpId',
 ];
 
 // 日付変換: YYYY/MM/DD → YYYY-MM-DD（ISO）
@@ -814,6 +819,8 @@ function parseLegendCsv(csvPath = CSV_PATH) {
     const remark     = unquote(vals[9] || '');
     let   marks      = [];
     try { marks = JSON.parse(unquote(vals[10] || '') || '[]'); } catch (_) {}
+    // 改修(spIdキー化): 12列目のSpId（無い旧行はundefined→空文字扱い）
+    const spId       = unquote(vals[11] || '');
     result.push({
       machine,
       start:     csvDateToIso(startRaw),
@@ -826,6 +833,7 @@ function parseLegendCsv(csvPath = CSV_PATH) {
       legendId,
       remark,
       marks,
+      spId,
     });
   }
   return result;
@@ -847,23 +855,28 @@ function writeLegendCsv(rows, csvPath = CSV_PATH) {
     quoteVal(r.legendId  || ''),
     quoteVal(r.remark    || ''),
     quoteVal(JSON.stringify(r.marks || [])),
+    quoteVal(r.spId      || ''),  // 改修(spIdキー化)
   ].join(','));
   // 改修(文字コード): UTF-8 BOMを先頭に付与（日本語Windowsのアプリが文字化けしないよう）
   const bom = '﻿';
   fs.writeFileSync(csvPath, bom + [headerLine, ...dataLines].join('\r\n') + '\r\n', 'utf8');
 }
 
-// 突合キーを生成（machine|start|end）
+// 突合キーを生成（machine|start|end）。SP未連携行（状態リスト等）の後方互換用
 function csvKey(machine, start, end) {
   return `${machine}|${(start || '').split('T')[0]}|${(end || '').split('T')[0]}`;
 }
 
-// 同一 machine+start+end があれば上書き、無ければ追記。満杯時は先頭行を削除
+// 改修(spIdキー化): 行の突合キーを生成する。SpIdがあればSpId優先（安定キー）、
+// 無ければ従来のmachine|start|end（状態リスト等、SP未連携の行用）
+function rowKey(r) {
+  return r.spId ? `sp:${r.spId}` : csvKey(r.machine, r.start, r.end);
+}
+
+// 同一キー（SpId優先、無ければmachine+start+end）があれば上書き、無ければ追記。満杯時は先頭行を削除
 // 改修(状態分離): パスを引数化（凡例色リスト/状態リスト共用）
 function appendLegendCsv(row, csvPath = CSV_PATH) {
   const rows = parseLegendCsv(csvPath);
-  const key  = csvKey(row.machine, row.start, row.end);
-  const idx  = rows.findIndex(r => csvKey(r.machine, r.start, r.end) === key);
   const newRow = {
     machine:   row.machine   || '',
     start:     (row.start    || '').split('T')[0],
@@ -876,7 +889,10 @@ function appendLegendCsv(row, csvPath = CSV_PATH) {
     legendId:  row.legendId  || '',
     remark:    row.remark    || '',
     marks:     Array.isArray(row.marks) ? row.marks : [],
+    spId:      row.spId      || '',  // 改修(spIdキー化)
   };
+  const key = rowKey(newRow);
+  const idx = rows.findIndex(r => rowKey(r) === key);
   if (idx >= 0) {
     rows[idx] = newRow;  // 上書き
   } else {
@@ -887,12 +903,13 @@ function appendLegendCsv(row, csvPath = CSV_PATH) {
   writeLegendCsv(rows, csvPath);
 }
 
-// 同一 machine+start+end の行を削除して書き戻す（該当無しは何もしない）
+// 同一キー（SpId優先、無ければmachine+start+end）の行を削除して書き戻す（該当無しは何もしない）
 // 改修(状態分離): パスを引数化（凡例色リスト/状態リスト共用）
-function deleteLegendCsv(machine, start, end, csvPath = CSV_PATH) {
-  const rows    = parseLegendCsv(csvPath);
-  const key     = csvKey(machine, start, end);
-  const filtered = rows.filter(r => csvKey(r.machine, r.start, r.end) !== key);
+// 改修(spIdキー化): spIdが渡された場合はspIdで削除、無ければ従来どおりmachine/start/endで削除
+function deleteLegendCsv(machine, start, end, csvPath = CSV_PATH, spId = '') {
+  const rows      = parseLegendCsv(csvPath);
+  const key       = spId ? `sp:${spId}` : csvKey(machine, start, end);
+  const filtered  = rows.filter(r => rowKey(r) !== key);
   if (filtered.length !== rows.length) {
     writeLegendCsv(filtered, csvPath);
   }

@@ -674,13 +674,16 @@ async function fetchLegendColors() {
 }
 
 // 改修(起動連携): 凡例色リストCSVに行を追記/上書きする
-// 突合キー: machine + start + end
+// 改修(spIdキー化): 突合キーはspId優先（安定）、無ければ従来のmachine+start+end
+// （南ルーム予約は使用履歴リストの実使用日付でmachine|start|endが変動し、他PCと突合できず
+//   色・凡例が共通化されない不具合があったため、spId（SharePoint項目ID）を追加した）
 async function apiAppendLegendColor(resData) {
   try {
     await fetch('/api/legend-colors', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
+        spId:      resData.spId      || '',
         machine:   resData.machine   || '',
         start:     resData.start     || '',
         end:       resData.end       || '',
@@ -700,11 +703,12 @@ async function apiAppendLegendColor(resData) {
   }
 }
 
-// 改修(起動連携): 凡例色リストCSVの該当行（machine+start+end）を削除する
-async function apiDeleteLegendColor(machine, start, end) {
-  if (!machine || !start || !end) return false;
+// 改修(起動連携): 凡例色リストCSVの該当行を削除する
+// 改修(spIdキー化): spIdがあればspIdで削除（安定キー）、無ければ従来のmachine+start+endで削除
+async function apiDeleteLegendColor(machine, start, end, spId) {
+  if (!spId && (!machine || !start || !end)) return false;
   try {
-    const params = new URLSearchParams({ machine, start, end });
+    const params = new URLSearchParams(spId ? { spId } : { machine, start, end });
     await fetch(`/api/legend-colors?${params}`, { method: 'DELETE' });
     return true;  // 改修: 呼び出し元で成否判定できるよう戻り値を追加（筐体名リネーム時の失敗カウント用）
   } catch (e) {
@@ -1097,7 +1101,8 @@ async function syncReservationEdit(resId, prevSpId, prevStatus, prevMachine, pre
     if (prevSpId != null) {
       // 正規→非正規への変更: 既存のSP行・凡例色リストCSV行を削除しspIdを外す
       await apiDelete(prevSpId);
-      await apiDeleteLegendColor(prevMachine, prevStart, prevEnd);
+      // 改修(spIdキー化): prevSpId（安定キー）を渡して削除する
+      await apiDeleteLegendColor(prevMachine, prevStart, prevEnd, prevSpId);
       state.reservations[resId].spId = null;
       saveReservations(state.reservations);
     }
@@ -3139,7 +3144,8 @@ async function runAcceptReject() {
       for (const res of rejList) {
         await fetch(`/api/reservations/${res.id}`, { method: 'DELETE' });
         // 改修(起動連携): SP行削除に合わせてCSVの該当行も削除する
-        await apiDeleteLegendColor(res.machine, res.start, res.end);
+        // 改修(spIdキー化): res.id（SharePoint項目ID）をspIdとして渡し、安定キーで削除する
+        await apiDeleteLegendColor(res.machine, res.start, res.end, res.id);
       }
     }
     // ④ 事務局へ辞退メール送信（改修(メール文面): 提案資料④に合わせて件名・本文を更新）
@@ -3217,7 +3223,8 @@ function deleteReservation(resId) {
     if (dStatus === 'normal') {
       if (dSpId != null) apiDelete(dSpId);
       // 改修(起動連携): SPアイテム削除に合わせてCSVの該当行も削除する
-      if (dMachine && dStart && dEnd) apiDeleteLegendColor(dMachine, dStart, dEnd);
+      // 改修(spIdキー化): dSpId（安定キー）を渡して削除する
+      if (dMachine && dStart && dEnd) apiDeleteLegendColor(dMachine, dStart, dEnd, dSpId);
     } else {
       // 改修(状態分離): 予備日/設備故障/休日はSharePoint未連携のため、状態リストCSVの該当行のみ削除する
       if (dMachine && dStart && dEnd) apiDeleteStatus(dMachine, dStart, dEnd);
@@ -4415,11 +4422,19 @@ async function init() {
   setStatus('データを読み込み中...', 'orange');
   const raw = await fetchReservations();
   // 改修(起動連携): CSVを読み込み、突合キー(machine|start|end)でMapを構築
-  const csvList = await fetchLegendColors();
-  const csvMap  = {};
+  // 改修(spIdキー化): 南ルーム予約は使用履歴リストの実使用日付でmachine|start|endが変動し、
+  // 他PCと突合できず色・凡例が共通化されない不具合があった。spId（安定キー）を優先し、
+  // spId無しの旧CSV行はレガシーキー(machine|start|end)へフォールバックする
+  const csvList  = await fetchLegendColors();
+  const csvBySpId = {};
+  const csvMap    = {};
   csvList.forEach(c => {
-    const key = `${c.machine}|${c.start}|${c.end}`;
-    csvMap[key] = c;
+    if (c.spId) {
+      csvBySpId[c.spId] = c;
+    } else {
+      const key = `${c.machine}|${c.start}|${c.end}`;
+      csvMap[key] = c;
+    }
   });
 
   if (raw !== null) {
@@ -4432,7 +4447,8 @@ async function init() {
       // （mapLegacyMachineはHELIOS→筐体変換であり西ルーム/レガシー専用のため適用しない）
       const machine = res.machine;
       const csvKey  = `${machine}|${res.start}|${res.end}`;
-      const csv     = csvMap[csvKey] || {};
+      // 改修(spIdキー化): spId優先で突合し、無ければ従来のレガシーキーへフォールバックする
+      const csv     = csvBySpId[res.id] || csvMap[csvKey] || {};
       const ex      = richMap[res.id] || {};
       return {
         spId:      res.id,
