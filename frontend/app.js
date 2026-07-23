@@ -2896,6 +2896,48 @@ document.getElementById('manual-btn').addEventListener('click', () => {
   window.open(isAdmin ? MANUAL_URL_ADMIN : MANUAL_URL_USER, '_blank');
 });
 
+// 改修: メール宛先/CC設定モーダル（事務局モードのみ）。
+// 環境変数(HILS_MAIL_PROMPT)やコンソール入力（対話起動）に依存せず、常駐運用中でも
+// backend/mail_config.json を書き換えられるようにする。GET/POST /api/mail-config を使用する。
+function openMailConfig() {
+  document.getElementById('mail-cfg-pmoTo').value   = mailConfig.pmoTo   || '';
+  document.getElementById('mail-cfg-pmoCc').value   = mailConfig.pmoCc  || '';
+  document.getElementById('mail-cfg-userCc').value  = mailConfig.userCc  || '';
+  document.getElementById('mail-cfg-alertCc').value = mailConfig.alertCc || '';
+  document.getElementById('mail-config-overlay').classList.remove('hidden');
+}
+function closeMailConfig() {
+  document.getElementById('mail-config-overlay').classList.add('hidden');
+}
+async function saveMailConfigFromUi() {
+  const payload = {
+    pmoTo:   document.getElementById('mail-cfg-pmoTo').value.trim(),
+    pmoCc:   document.getElementById('mail-cfg-pmoCc').value.trim(),
+    userCc:  document.getElementById('mail-cfg-userCc').value.trim(),
+    alertCc: document.getElementById('mail-cfg-alertCc').value.trim(),
+  };
+  showBusy('メール設定を保存中...');
+  try {
+    const res = await fetch('/api/mail-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const saved = await res.json();
+    Object.assign(mailConfig, saved); // 画面内のmailConfigも即時更新（署名・宛先解決に反映）
+    closeMailConfig();
+  } catch (e) {
+    console.error('メール宛先/CC設定の保存に失敗しました:', e);
+    alert('メール設定の保存に失敗しました。');
+  } finally {
+    hideBusy();
+  }
+}
+document.getElementById('mail-config-btn').addEventListener('click', openMailConfig);
+document.getElementById('mail-cfg-cancel').addEventListener('click', closeMailConfig);
+document.getElementById('mail-cfg-save').addEventListener('click', saveMailConfigFromUi);
+
 // 改修(地図ボタンルーム別化): ルームごとに地図の遷移先URLが異なるため、ルーム別に定数を分ける
 const MAP_URL_WEST  = 'http://172.25.7.82:5173/map?room=%E8%A5%BFHILS%E3%83%AB%E3%83%BC%E3%83%A0';
 const MAP_URL_SOUTH = 'http://172.25.7.82:5173/map?room=%E5%8D%97HILS%E3%83%AB%E3%83%BC%E3%83%A0';
@@ -4192,6 +4234,9 @@ async function init() {
   if (!isAdmin) document.getElementById('register-btn').classList.add('hidden');
   // 改修(休日設定廃止→予約不可設定): 予約不可ボタンは事務局のみ表示する
   if (!isAdmin) document.getElementById('blockade-btn').classList.add('hidden');
+  // 改修: メール宛先/CC設定ボタンは事務局のみ表示する
+  // （環境変数・コンソール入力なしで設定変更できるようにするための画面。openMailConfig()参照）
+  if (isAdmin) document.getElementById('mail-config-btn').classList.remove('hidden');
 
   // 改修(ドラッグリサイズ対応): 保存済みのサイドパネル幅があれば復元する。
   // ここで幅を確定させておくことで、後続のrenderCalendar()内のapplyDateColWidth()が

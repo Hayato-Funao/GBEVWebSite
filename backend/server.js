@@ -294,10 +294,43 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 改修: GET /api/mail-config — コンソールで設定した事務局宛先(To)・CCをフロントへ配布
-  // （alertCcはPythonバッチ側のみで使用するため配布対象外）
+  // 改修: GET /api/mail-config — 事務局宛先(To)・CCをフロントへ配布
+  // （改修: 事務局モード管理画面での編集フォーム初期表示に使うため、alertCcも配布対象に加える）
   if (pathname === '/api/mail-config' && method === 'GET') {
-    return jsonOk(res, { pmoTo: mailConfig.pmoTo, pmoCc: mailConfig.pmoCc, userCc: mailConfig.userCc });
+    return jsonOk(res, {
+      pmoTo:   mailConfig.pmoTo,
+      pmoCc:   mailConfig.pmoCc,
+      userCc:  mailConfig.userCc,
+      alertCc: mailConfig.alertCc,
+    });
+  }
+
+  // 改修: POST /api/mail-config — 事務局モード画面からメール宛先/CCを更新する
+  // 環境変数(HILS_MAIL_PROMPT)やコンソール入力（対話起動）に依存せず、常駐運用中でも設定変更できるようにする。
+  // 宛先(To)は空文字での上書きを避け現状維持、CC3項目は空文字を「CCなし」として確定する
+  // （コンソール入力時のpromptMailConfig()と挙動を統一）。
+  if (pathname === '/api/mail-config' && method === 'POST') {
+    try {
+      const body = await readBody(req);
+      if (typeof body.pmoTo === 'string' && body.pmoTo.trim()) {
+        mailConfig.pmoTo = body.pmoTo.trim();
+      }
+      if (typeof body.pmoCc === 'string')   mailConfig.pmoCc   = body.pmoCc.trim();
+      if (typeof body.userCc === 'string')  mailConfig.userCc  = body.userCc.trim();
+      if (typeof body.alertCc === 'string') mailConfig.alertCc = body.alertCc.trim();
+      saveMailConfig(mailConfig);
+      jsonOk(res, {
+        success: true,
+        pmoTo:   mailConfig.pmoTo,
+        pmoCc:   mailConfig.pmoCc,
+        userCc:  mailConfig.userCc,
+        alertCc: mailConfig.alertCc,
+      });
+    } catch (e) {
+      console.error('POST /api/mail-config:', e.message);
+      jsonErr(res, 500, e.message);
+    }
+    return;
   }
 
   // 改修(第14回): POST /api/mail — Graph API /me/sendMail 経由でメール送信

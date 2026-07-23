@@ -39,6 +39,9 @@
           <span id="status-msg" class="status-msg hidden"></span>
         </div>
         <button id="manual-btn" class="btn btn-manual">マニュアル</button>
+        <!-- 改修: メール宛先/CC設定ボタン（事務局モードのみ表示。app.jsのisAdmin判定でhiddenを外す）
+             環境変数(HILS_MAIL_PROMPT)やコンソール入力（対話起動）に依存せず、常駐運用中でも設定変更できるようにする -->
+        <button id="mail-config-btn" class="btn btn-manual hidden">メール設定</button>
         <!-- 改修(地図ボタンルーム別化): 初期値は西HILSルーム。ルーム切替時はapp.jsのapplyMapUrl()がhrefを書き換える --><a id="map-btn" class="btn btn-manual" href="http://172.25.7.82:5173/map?room=%E8%A5%BFHILS%E3%83%AB%E3%83%BC%E3%83%A0" target="_blank" rel="noopener">地図</a>
         <div class="user-area">
           <span id="user-name"></span>
@@ -120,7 +123,8 @@
         </div>
       </div>
       <div id="info-panel" class="info-panel">
-        <span id="info-hint"    class="info-hint">予約をクリックすると詳細を表示します</span>
+        <!-- 改修: コメント入力案内文言へ変更（赤字化はstyle.css .info-hintで対応） -->
+        <span id="info-hint"    class="info-hint">セルを右クリックするとコメントを入力できます</span>
         <span id="info-machine" class="info-item hidden"></span>
         <span id="info-period"  class="info-item hidden"></span>
         <span id="info-label"     class="info-item hidden"></span>
@@ -149,7 +153,8 @@
           <!-- 改修(複数行予約表示調整): 使用開始日/使用終了日は複数行予約でも共通のため単一セル、
                機種名のみ複数予約分を列挙する（#accept-info-machinesにrenderAcceptInfo()が行を差し込む） -->
           <table class="accept-info-table">
-            <tr><th>機種名</th><td><div id="accept-info-machines">−</div></td></tr>
+            <!-- 改修: 表記統一のため「機種名」→「環境名」に変更 -->
+            <tr><th>環境名</th><td><div id="accept-info-machines">−</div></td></tr>
             <tr><th>使用開始日</th><td id="accept-info-start">−</td></tr>
             <tr><th>使用終了日</th><td id="accept-info-end">−</td></tr>
           </table>
@@ -169,16 +174,13 @@
           </div>
 
           <!-- 承知時の入力欄（初期表示） -->
+          <!-- 改修: 承知時は理由記述欄が不要のため削除。注意文（利用終了報告の周知）は維持 -->
           <div id="accept-action-ok" class="accept-action-body">
             <!-- 改修: 利用終了時の対応事項（利用終了報告ボタン押下・初期状態復帰確認）を承知前に周知 -->
             <p class="accept-note accept-warning">
               利用終了時には、使用者が利用終了報告ボタンを押下して、事務局に報告してください。<br>
               ※HILSの初期状態復帰が確認できない場合、処理依頼、または次回以降の貸出しを禁止することがあります。
             </p>
-            <div class="form-row">
-              <label>理由（任意）:</label>
-              <textarea id="accept-ok-reason" rows="2" placeholder="任意入力"></textarea>
-            </div>
           </div>
 
           <!-- 辞退時の入力欄 -->
@@ -224,6 +226,34 @@
   <div class="busy-box">
     <div class="busy-spinner"></div>
     <div class="busy-text">処理中...</div>
+  </div>
+</div>
+
+<!-- 改修: メール宛先/CC設定モーダル（事務局モードのみ。mail-config-btn押下で表示）
+     環境変数・コンソール入力なしで backend/mail_config.json を更新できるようにするための画面 -->
+<div id="mail-config-overlay" class="busy-overlay hidden">
+  <div class="mail-config-box">
+    <h3 class="mail-config-title">メール宛先/CC設定</h3>
+    <div class="form-row">
+      <label>事務局宛先(To):</label>
+      <input type="text" id="mail-cfg-pmoTo" placeholder="複数可・カンマ区切り／空欄で現状維持">
+    </div>
+    <div class="form-row">
+      <label>事務局宛CC:</label>
+      <input type="text" id="mail-cfg-pmoCc" placeholder="複数可・カンマ区切り／空欄でCCなし">
+    </div>
+    <div class="form-row">
+      <label>ユーザー宛CC:</label>
+      <input type="text" id="mail-cfg-userCc" placeholder="複数可・カンマ区切り／空欄でCCなし">
+    </div>
+    <div class="form-row">
+      <label>アラートCC:</label>
+      <input type="text" id="mail-cfg-alertCc" placeholder="複数可・カンマ区切り／空欄でCCなし">
+    </div>
+    <div class="dialog-footer-right">
+      <button id="mail-cfg-cancel" class="btn btn-cancel">キャンセル</button>
+      <button id="mail-cfg-save"   class="btn btn-ok">保存</button>
+    </div>
   </div>
 </div>
 
